@@ -4,6 +4,7 @@ import { WebSocketServer } from "ws";
 import authenticate from "../auth/websocket.mjs";
 import onSocketError from "../errors/websocket.mjs";
 import { INFLUX_LINE_PROTOCOL_SCHEMA } from "../../types/message.mjs";
+import deviceRoutes from "../../routes/devices.mjs";
 
 const server = createServer();
 const wss = new WebSocketServer({ noServer: true });
@@ -56,7 +57,25 @@ wss.on("ping", (ws: WebSocketServer, req: IncomingMessage) => {
     console.log(req.headers);
 });
 
+server.on("request", (req, res) => {
+    if (req.url !== "/api/v1") {
+        res.writeHead(403);
+        res.end("Forbidden");
+        return;
+    }
+    console.log(req.url);
+    res.setHeader("Content-Type", "application/json");
+    res.writeHead(200);
+    res.end("OK");
+    return;
+});
+
 server.on("upgrade", function upgrade(request, socket, head) {
+    if (request.url !== "/api/live") {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+    }
     socket.on("error", onSocketError);
 
     authenticate(request, function next(err, client) {

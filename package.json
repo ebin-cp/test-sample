@@ -4,7 +4,8 @@
 	"scripts": {
 		"devBuild": "npx tsc --project tsconfig.dev.json",
 		"prodBuild": "npx tsc --project tsconfig.prod.json",
-		"start": "node dist/main.mjs"
+		"start": "node dist/main.mjs",
+		"test_db": "node dist/services/db-connection/db-connection.mjs"
 	},
 	"type": "module",
 	"keywords": [],
@@ -23,6 +24,7 @@
 	"dependencies": {
 		"dotenv": "^16.4.5",
 		"jsonwebtoken": "^9.0.2",
+		"mariadb": "^3.4.5",
 		"node-fetch": "^3.3.2",
 		"ulid": "^3.0.1",
 		"ws": "^8.18.3",

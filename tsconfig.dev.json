@@ -1,6 +1,7 @@
 {
 	"compilerOptions": {
 		"target": "ES2022",
+		"lib": ["es2022"],
 		"strict": true,
 		"preserveConstEnums": true,
 		"noEmit": false,
@@ -16,11 +17,6 @@
 		"removeComments": true,
 		"allowJs": false
 	},
-	"exclude": [
-		"node_modules",
-		"**/*.test.ts",
-		"./dist/**/*",
-		"aws-api-gateway",
-	],
+	"exclude": ["node_modules", "**/*.test.ts", "./dist/**/*", "aws-api-gateway"],
 	"include": ["dev/**/*", "src/**/*", ".env"]
 }

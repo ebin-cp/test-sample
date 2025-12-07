@@ -1,12 +1,12 @@
 services:
   mariadb:
-    image: mariadb:latest
+    build:
+      context: ../..
+      dockerfile: docker/v1/Dockerfile.mariadb
+      no_cache: true
     container_name: mariadb
     environment:
-      MARIADB_ROOT_PASSWORD: rootpassword
-      MARIADB_DATABASE: appdb
-      MARIADB_USER: dbuser
-      MARIADB_PASSWORD: dbpassword
+      MARIADB_ROOT_PASSWORD: CRMvizzYgOrl4ljB2uY9MtkLhIIpucKx
     volumes:
       - mariadb_data:/var/lib/mariadb
     ports:
@@ -22,7 +22,7 @@ services:
       no_cache: true
     container_name: nodejs_app
     environment:
-      DATABASE_URL: mariadb://dbuser:dbpassword@db:3306/appdb
+      DATABASE_URL: mariadb://01KBW95T0KDJR9DXB76N85YN44:01KBW946RN5ZD4MP9R46R7AP57_01kbw94d5wv0cd4521bw1andra@genrobotics:3306/genrobotics
       NODE_ENV: production
       SOCKET_PORT: 11758
     depends_on:
