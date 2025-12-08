@@ -11,6 +11,9 @@ CREATE TABLE devices (
     modified_at BIGINT NOT NULL -- Nanosecond timestamp
 );
 
+ALTER TABLE devices
+ADD CONSTRAINT unique_imei UNIQUE (imei);
+
 CREATE TABLE device_volume_sensor_log (
     id VARCHAR(30) PRIMARY KEY,
     imei VARCHAR(50) NOT NULL,

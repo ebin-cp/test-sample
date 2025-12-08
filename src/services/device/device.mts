@@ -8,7 +8,15 @@ export class DeviceService {
         this.db_connection = db;
     }
 
-    get() { }
+    async get(imei?: string) {
+        const getQuery = await this.db_connection.query(
+            imei
+                ? `SELECT imei,api_keys,tags,fields FROM devices WHERE imei=${imei}`
+                : "SELECT imei,api_keys,tags,fields FROM devices",
+        );
+
+        return getQuery;
+    }
 
     async create(imei: string) {
         const device: Device = {
@@ -34,11 +42,7 @@ export class DeviceService {
             ],
         );
 
-        console.log(insertQuery);
-
-        const getQuery = await this.db_connection.query("SELECT * FROM devices");
-
-        console.log(getQuery);
+        return { result: `${insertQuery}`, key: device.api_keys };
     }
 
     async insert_volume_sensor_log(msg: string) { }

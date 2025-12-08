@@ -57,20 +57,30 @@ wss.on("ping", (ws: WebSocketServer, req: IncomingMessage) => {
     console.log(req.headers);
 });
 
-server.on("request", (req, res) => {
-    if (req.url !== "/api/v1") {
-        res.writeHead(403);
-        res.end("Forbidden");
-        return;
+server.on("request", async (req, res) => {
+    const routeKey: string = `${req.url}`;
+    let response: { statusCode: number; body: object | string } = {
+        statusCode: 403,
+        body: JSON.stringify({ error: "Invalid" }),
+    };
+    switch (true) {
+        case routeKey.includes("/api/v1/device"): {
+            const routeReq = await deviceRoutes(req);
+            response.body = routeReq.body;
+            response.statusCode = routeReq.statusCode;
+            break;
+        }
+        default: {
+            break;
+        }
     }
-    console.log(req.url);
     res.setHeader("Content-Type", "application/json");
-    res.writeHead(200);
-    res.end("OK");
+    res.writeHead(response.statusCode);
+    res.end(response.body);
     return;
 });
 
-server.on("upgrade", function upgrade(request, socket, head) {
+server.on("upgrade", async function upgrade(request, socket, head) {
     if (request.url !== "/api/live") {
         socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
         socket.destroy();
@@ -78,7 +88,7 @@ server.on("upgrade", function upgrade(request, socket, head) {
     }
     socket.on("error", onSocketError);
 
-    authenticate(request, function next(err, client) {
+    await authenticate(request, function next(err, client) {
         if (err || !client) {
             socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
             socket.destroy();
