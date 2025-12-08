@@ -22,7 +22,7 @@ wss.on(
         console.log(`Device connected using API KEY = ${client_api}`);
 
         clientDetails.set(ws, { api_key: `${client_api}`, client: ws });
-        ws.on("message", function message(data: Buffer) {
+        ws.on("message", async function message(data: Buffer) {
             const details = clientDetails.get(ws);
 
             if (details) {
@@ -41,6 +41,7 @@ wss.on(
                 details?.client.send(errorMessage);
                 return;
             }
+            await deviceRoutes(request,validate.data);
             console.log(
                 `Received message ${validate.data} from user ${request.headers.origin}`,
             );

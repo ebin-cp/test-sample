@@ -3,13 +3,14 @@ import connection from "../services/db-connection/db-connection.mjs";
 import { DeviceService } from "../services/device/device.mjs";
 import getRequestBody from "../utils/get-request-body.mjs";
 
-async function deviceRoutes(req: IncomingMessage) {
-    const routeKey: string = `${req.method} ${req.url}`;
+async function deviceRoutes(req: IncomingMessage, ws_msg?: string) {
+    const routeKey: string = ws_msg?'ws_msg':`${req.method} ${req.url}`;
     const devices = new DeviceService(connection);
     let response: { statusCode: number; body: object | string } = {
         statusCode: 403,
         body: JSON.stringify({ error: "Invalid" }),
     };
+    console.log(ws_msg)
     switch (routeKey) {
         case "GET /api/v1/device": {
             const readReq = await devices.get();
@@ -26,6 +27,13 @@ async function deviceRoutes(req: IncomingMessage) {
             });
             response.body = JSON.stringify(createReq);
             response.statusCode = 200;
+            break;
+        }
+        case 'ws_msg': {
+            console.log("Inserting")
+            if (ws_msg) {
+                await devices.insert_volume_sensor_log(ws_msg);
+            }
             break;
         }
         default: {

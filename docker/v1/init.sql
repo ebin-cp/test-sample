@@ -30,6 +30,9 @@ CREATE TABLE device_volume_sensor_log (
 CREATE INDEX idx_log_imei_timestamp
 ON device_volume_sensor_log (imei, timestamp);
 
+ALTER TABLE device_volume_sensor_log
+ADD CONSTRAINT unique_id UNIQUE (id);
+
 CREATE USER '01KBW95T0KDJR9DXB76N85YN44'@'%' IDENTIFIED BY '01KBW946RN5ZD4MP9R46R7AP57_01kbw94d5wv0cd4521bw1andra';
 
 GRANT
