@@ -32,7 +32,7 @@ async function deviceRoutes(req: IncomingMessage, ws_msg?: string) {
         case 'ws_msg': {
             console.log("Inserting")
             if (ws_msg) {
-                await devices.insert_volume_sensor_log(ws_msg);
+                await devices.insert_monitorlog(ws_msg);
             }
             break;
         }

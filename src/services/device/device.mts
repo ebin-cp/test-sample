@@ -47,7 +47,7 @@ export class DeviceService {
         return { result: `${insertQuery}`, key: device.api_keys };
     }
 
-    async insert_volume_sensor_log(msg: string) {
+    async insert_monitorlog(msg: string) {
         const msg_to_json = await influx_line_protocol_parser(msg).catch(
             (err: { res: InfluxLineParsed[]; err: Error }) => {
                 return err;
@@ -61,42 +61,37 @@ export class DeviceService {
 
         console.log(JSON.stringify(msg_to_json));
 
-        const volume_data = msg_to_json.res.filter(
-            (i) => i.measurement === "volume",
-        );
-        console.log(JSON.stringify(volume_data));
+        console.log(JSON.stringify(msg_to_json.res));
 
-        if (volume_data) {
-            for (const log_item of volume_data) {
-                const imei = log_item.tags.filter((i) => i.key === "imei")[0]?.value;
-                console.log(imei);
-                if (imei) {
-                    const insertQuery = await this.db_connection
-                        .query(
-                            "INSERT INTO device_volume_sensor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?)",
-                            [
-                                ulid(),
-                                imei,
-                                log_item.measurement,
-                                JSON.stringify(log_item.tags.filter((i) => i.key !== "imei")),
-                                JSON.stringify(log_item.fields),
-                                log_item.timestamp,
-                            ],
-                        )
-                        .catch((err) => {
-                            console.log(err);
-                        });
+        for (const log_item of msg_to_json.res) {
+            const imei = log_item.tags.filter((i) => i.key === "imei")[0]?.value;
+            console.log(imei);
+            if (imei) {
+                const insertQuery = await this.db_connection
+                    .query(
+                        "INSERT INTO device_monitor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?)",
+                        [
+                            ulid(),
+                            imei,
+                            log_item.measurement,
+                            JSON.stringify(log_item.tags.filter((i) => i.key !== "imei")),
+                            JSON.stringify(log_item.fields),
+                            log_item.timestamp,
+                        ],
+                    )
+                    .catch((err) => {
+                        console.log(err);
+                    });
 
-                    console.log(insertQuery);
-                }
+                console.log(insertQuery);
             }
         }
         return { result: " " };
     }
 
-    async get_volume_sensor_log(imei: string) {
+    async get_monitorlog(imei: string) {
         const getQuery = await this.db_connection.query(
-            `SELECT imei,measurement,tags,fields,timestamp FROM devices_volume_sensor_log WHERE imei=${imei} ORDER BY timestamp DESC LIMIT 1000`,
+            `SELECT imei,measurement,tags,fields,timestamp FROM devices_monitorlog WHERE imei=${imei} ORDER BY timestamp DESC LIMIT 1000`,
         );
 
         return getQuery;

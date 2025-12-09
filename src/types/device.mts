@@ -25,7 +25,7 @@ export const DEVICE_SCHEMA = z.object({
 
 export type Device = z.infer<typeof DEVICE_SCHEMA>;
 
-export const DEVICE_VOLUME_SENSOR_LOG_SCHEMA = z.object({
+export const DEVICE_MONITOR_LOG_SCHEMA = z.object({
     id: z.string(),
     imei: z.string(),
     measurement: z.string(),
@@ -40,6 +40,4 @@ export const DEVICE_VOLUME_SENSOR_LOG_SCHEMA = z.object({
     timestamp: z.number(),
 });
 
-export type DeviceVolumeSensorLog = z.infer<
-    typeof DEVICE_VOLUME_SENSOR_LOG_SCHEMA
->;
+export type DeviceMonitorLog = z.infer<typeof DEVICE_MONITOR_LOG_SCHEMA>;
