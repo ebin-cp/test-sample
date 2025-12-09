@@ -49,13 +49,13 @@ export class DeviceService {
 
     async insert_volume_sensor_log(msg: string) {
         const msg_to_json = await influx_line_protocol_parser(msg).catch(
-            (err: {res:InfluxLineParsed[],err:Error}) => {
+            (err: { res: InfluxLineParsed[]; err: Error }) => {
                 return err;
             },
         );
 
         if (msg_to_json.err) {
-            console.log(msg_to_json.err.message)
+            console.log(msg_to_json.err.message);
             return msg_to_json.err;
         }
 
@@ -63,32 +63,32 @@ export class DeviceService {
 
         const volume_data = msg_to_json.res.filter(
             (i) => i.measurement === "volume",
-        )[0];
+        );
         console.log(JSON.stringify(volume_data));
 
         if (volume_data) {
-            const imei = volume_data.tags.filter((i) => i.key === "imei")[0]?.value;
-            console.log(imei);
-            if (imei) {
-                const insertQuery = await this.db_connection
-                    .query(
-                        "INSERT INTO device_volume_sensor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?)",
-                        [
-                            ulid(),
-                            imei,
-                            volume_data.measurement,
-                            JSON.stringify(volume_data.tags.filter((i) => i.key !== "imei")),
-                            JSON.stringify(volume_data.fields),
-                            volume_data.timestamp,
-                        ],
-                    )
-                    .catch((err) => {
-                        console.log(err);
-                    });
+            for (const log_item of volume_data) {
+                const imei = log_item.tags.filter((i) => i.key === "imei")[0]?.value;
+                console.log(imei);
+                if (imei) {
+                    const insertQuery = await this.db_connection
+                        .query(
+                            "INSERT INTO device_volume_sensor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?)",
+                            [
+                                ulid(),
+                                imei,
+                                log_item.measurement,
+                                JSON.stringify(log_item.tags.filter((i) => i.key !== "imei")),
+                                JSON.stringify(log_item.fields),
+                                log_item.timestamp,
+                            ],
+                        )
+                        .catch((err) => {
+                            console.log(err);
+                        });
 
-                console.log(insertQuery);
-
-                return { result: `${insertQuery}` };
+                    console.log(insertQuery);
+                }
             }
         }
         return { result: " " };
