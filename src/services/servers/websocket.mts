@@ -42,9 +42,6 @@ wss.on(
                 return;
             }
             await deviceRoutes(request,validate.data);
-            console.log(
-                `Received message ${validate.data} from user ${request.headers.origin}`,
-            );
         });
 
         ws.on("close", () => {

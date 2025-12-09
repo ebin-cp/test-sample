@@ -1,7 +1,8 @@
 import * as mariadb from "mariadb";
 import type { Device } from "../../types/device.mjs";
 import { ulid } from "ulid";
-import { influx_line_protocol_parser } from "../../utils/influx-line-protocol-parser.mjs";
+import influx_line_protocol_parser from "../../utils/influx-line-protocol-parser.mjs";
+import { InfluxLineParsed } from "../../types/message.mjs";
 
 export class DeviceService {
     db_connection: mariadb.PoolConnection;
@@ -47,29 +48,50 @@ export class DeviceService {
     }
 
     async insert_volume_sensor_log(msg: string) {
-        const msg_to_json = influx_line_protocol_parser(msg);
+        const msg_to_json = await influx_line_protocol_parser(msg).catch(
+            (err: {res:InfluxLineParsed[],err:Error}) => {
+                return err;
+            },
+        );
 
-        if (msg_to_json.error) {
-            return msg_to_json;
+        if (msg_to_json.err) {
+            console.log(msg_to_json.err.message)
+            return msg_to_json.err;
         }
 
-        const insertQuery = await this.db_connection.query(
-            "INSERT INTO device_volume_sensor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?)",
-            [
-                ulid(),
-                msg_to_json.imei,
-                msg_to_json.measurement,
-                JSON.stringify(msg_to_json.tags),
-                JSON.stringify(msg_to_json.fields),
-                msg_to_json.timestamp,
-            ],
-        ).catch((err)=>{
-            console.log(err)
-            });
+        console.log(JSON.stringify(msg_to_json));
 
-        console.log(insertQuery)
+        const volume_data = msg_to_json.res.filter(
+            (i) => i.measurement === "volume",
+        )[0];
+        console.log(JSON.stringify(volume_data));
 
-        return { result: `${insertQuery}` };
+        if (volume_data) {
+            const imei = volume_data.tags.filter((i) => i.key === "imei")[0]?.value;
+            console.log(imei);
+            if (imei) {
+                const insertQuery = await this.db_connection
+                    .query(
+                        "INSERT INTO device_volume_sensor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?)",
+                        [
+                            ulid(),
+                            imei,
+                            volume_data.measurement,
+                            JSON.stringify(volume_data.tags.filter((i) => i.key !== "imei")),
+                            JSON.stringify(volume_data.fields),
+                            volume_data.timestamp,
+                        ],
+                    )
+                    .catch((err) => {
+                        console.log(err);
+                    });
+
+                console.log(insertQuery);
+
+                return { result: `${insertQuery}` };
+            }
+        }
+        return { result: " " };
     }
 
     async get_volume_sensor_log(imei: string) {
