@@ -1,2 +1,9 @@
 FROM mariadb:latest
+
+SHELL ["/bin/bash", "-c"]
+
+RUN ulimit -n 65536
+
+RUN ulimit -u 4096
+
 COPY docker/v1/init.sql /docker-entrypoint-initdb.d/

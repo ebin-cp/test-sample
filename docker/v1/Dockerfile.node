@@ -4,6 +4,10 @@ RUN apk update && apk add bash
 
 SHELL ["/bin/bash", "-c"]
 
+RUN ulimit -n 65536
+
+RUN ulimit -u 4096
+
 WORKDIR /app
 
 COPY package*.json ./
