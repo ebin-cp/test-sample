@@ -7,6 +7,13 @@ services:
     container_name: mariadb
     environment:
       MARIADB_ROOT_PASSWORD: CRMvizzYgOrl4ljB2uY9MtkLhIIpucKx
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 2048
+        hard: 4096
     healthcheck:
       test: ["CMD", "mariadb-admin", "ping", "-u", "root", "-pCRMvizzYgOrl4ljB2uY9MtkLhIIpucKx"] 
       interval: 5s
@@ -31,6 +38,13 @@ services:
       DATABASE_URL: mariadb://01KBW95T0KDJR9DXB76N85YN44:01KBW946RN5ZD4MP9R46R7AP57_01kbw94d5wv0cd4521bw1andra@genrobotics:3306/genrobotics
       NODE_ENV: production
       SOCKET_PORT: 11758
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 2048
+        hard: 4096
     depends_on:
       mariadb:
         condition: service_healthy
@@ -44,6 +58,13 @@ services:
       dockerfile: docker/v1/Dockerfile.nginx
       no_cache: true
     container_name: nginx_proxy
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 2048
+        hard: 4096
     ports:
       - "8883:80"
       - "8884:443"

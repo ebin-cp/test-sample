@@ -17,7 +17,7 @@ async function authenticate(
 
     const [imei, key] = request.headers.authorization.split(" ");
 
-    console.log(imei, key);
+    console.log("Authentication running for client ",imei, key);
 
     const validate_auth_key = await connection
         .query(

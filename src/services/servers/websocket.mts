@@ -41,7 +41,7 @@ wss.on(
                 details?.client.send(errorMessage);
                 return;
             }
-            await deviceRoutes(request,validate.data);
+            await deviceRoutes(request, validate.data);
         });
 
         ws.on("close", () => {
@@ -91,6 +91,17 @@ server.on("upgrade", async function upgrade(request, socket, head) {
             socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
             socket.destroy();
             return;
+        }
+
+        if (clientDetails.size) {
+            for (const i of clientDetails) {
+                console.log("Listing Keys ",i[1].api_key);
+                if (i[1].api_key === request.headers.authorization) {
+                    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+                    socket.destroy();
+                    return;
+                }
+            }
         }
 
         socket.removeListener("error", onSocketError);
