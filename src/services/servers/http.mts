@@ -38,16 +38,18 @@ server.on("upgrade", async function upgrade(request, socket, head) {
     socket.on("error", onSocketError);
 
     await authenticate(request, function next(err, client) {
-        if (err || !client) {
+        if (err || !client || !request.headers.authorization) {
             socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
             socket.destroy();
             return;
         }
 
+        const [_client_api, client_imei] = request.headers.authorization.split(" ");
+
         if (clientDetails.size) {
             for (const i of clientDetails) {
-                console.log("Listing Keys ", i[1].api_key);
-                if (i[1].api_key === request.headers.authorization) {
+                console.log("Listing clients ", i[1].imei);
+                if (i[1].imei === client_imei) {
                     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
                     socket.destroy();
                     return;

@@ -7,18 +7,26 @@ import deviceRoutes from "../../routes/devices.mjs";
 const wss = new WebSocketServer({ noServer: true });
 const clientDetails = new Map<
     WebSocket,
-    { api_key: string; client: WebSocket }
+    { api_key: string; imei: string; client: WebSocket }
 >();
 
 wss.on(
     "connection",
     function connection(ws: WebSocket, request: IncomingMessage) {
         ws.on("error", console.error);
-        const client_api = request.headers.authorization;
+        if (!request.headers.authorization) {
+            ws.close(401);
+            return;
+        }
+        const [client_api, client_imei] = request.headers.authorization.split(" ");
 
-        console.log(`Device connected using API KEY = ${client_api}`);
+        console.log(`Device ${client_imei} connected using API KEY ${client_api}`);
 
-        clientDetails.set(ws, { api_key: `${client_api}`, client: ws });
+        clientDetails.set(ws, {
+            api_key: `${client_api}`,
+            imei: `${client_imei}`,
+            client: ws,
+        });
         ws.on("message", async function message(data: Buffer) {
             const details = clientDetails.get(ws);
 
