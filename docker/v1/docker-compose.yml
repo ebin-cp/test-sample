@@ -7,6 +7,12 @@ services:
     container_name: mariadb
     environment:
       MARIADB_ROOT_PASSWORD: CRMvizzYgOrl4ljB2uY9MtkLhIIpucKx
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-u", "root", "-pCRMvizzYgOrl4ljB2uY9MtkLhIIpucKx"] 
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 30s
     volumes:
       - mariadb_data:/var/lib/mariadb
     ports:
@@ -26,7 +32,8 @@ services:
       NODE_ENV: production
       SOCKET_PORT: 11758
     depends_on:
-      - mariadb
+      mariadb:
+        condition: service_healthy
     networks:
       - app_network
     restart: unless-stopped
