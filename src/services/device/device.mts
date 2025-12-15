@@ -2,7 +2,7 @@ import * as mariadb from "mariadb";
 import type { Device } from "../../types/device.mjs";
 import { ulid } from "ulid";
 import influx_line_protocol_parser from "../../utils/influx-line-protocol-parser.mjs";
-import { InfluxLineParsed } from "../../types/message.mjs";
+import type { InfluxLineParsed } from "../../types/message.mjs";
 
 export class DeviceService {
     db_connection: mariadb.PoolConnection;
