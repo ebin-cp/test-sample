@@ -1,12 +1,9 @@
-import { createServer, type IncomingMessage } from "node:http";
+import type { IncomingMessage } from "node:http";
 import type WebSocket from "ws";
 import { WebSocketServer } from "ws";
-import authenticate from "../auth/websocket.mjs";
-import onSocketError from "../errors/websocket.mjs";
 import { INFLUX_LINE_PROTOCOL_SCHEMA } from "../../types/message.mjs";
 import deviceRoutes from "../../routes/devices.mjs";
 
-const server = createServer();
 const wss = new WebSocketServer({ noServer: true });
 const clientDetails = new Map<
     WebSocket,
@@ -51,65 +48,8 @@ wss.on(
     },
 );
 
-wss.on("ping", (ws: WebSocketServer, req: IncomingMessage) => {
+wss.on("ping", (_ws: WebSocketServer, req: IncomingMessage) => {
     console.log(req.headers);
 });
 
-server.on("request", async (req, res) => {
-    const routeKey: string = `${req.url}`;
-    let response: { statusCode: number; body: object | string } = {
-        statusCode: 403,
-        body: JSON.stringify({ error: "Invalid" }),
-    };
-    switch (true) {
-        case routeKey.includes("/api/v1/device"): {
-            const routeReq = await deviceRoutes(req);
-            response.body = routeReq.body;
-            response.statusCode = routeReq.statusCode;
-            break;
-        }
-        default: {
-            break;
-        }
-    }
-    res.setHeader("Content-Type", "application/json");
-    res.writeHead(response.statusCode);
-    res.end(response.body);
-    return;
-});
-
-server.on("upgrade", async function upgrade(request, socket, head) {
-    if (request.url !== "/api/live") {
-        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-        socket.destroy();
-        return;
-    }
-    socket.on("error", onSocketError);
-
-    await authenticate(request, function next(err, client) {
-        if (err || !client) {
-            socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-            socket.destroy();
-            return;
-        }
-
-        if (clientDetails.size) {
-            for (const i of clientDetails) {
-                console.log("Listing Keys ",i[1].api_key);
-                if (i[1].api_key === request.headers.authorization) {
-                    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-                    socket.destroy();
-                    return;
-                }
-            }
-        }
-
-        socket.removeListener("error", onSocketError);
-
-        wss.handleUpgrade(request, socket, head, function done(ws) {
-            wss.emit("connection", ws, request, client);
-        });
-    });
-});
-
-export default server;
+export { wss, clientDetails };
