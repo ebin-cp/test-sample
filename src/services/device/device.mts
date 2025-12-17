@@ -89,7 +89,7 @@ export class DeviceService {
                     });
 
                 console.log(
-                    `${insertQuery.affectedRows > 0 ? "Failed" : "Successful"
+                    `${insertQuery.affectedRows < 0 ? "Failed" : "Successful"
                     } measurement insert`,
                 );
             }
@@ -111,7 +111,7 @@ export class DeviceService {
 
     async device_presence(imei: string, event: string) {
         const updateQuery = await this.db_connection.query(
-            `UPDATE devices SET presence = CONCAT('${event} ', UNIX_TIMESTAMP() * 1000) WHERE imei = ${imei}`,
+            `UPDATE devices SET presence = CONCAT('${event} ', UNIX_TIMESTAMP() * 1000) WHERE imei = '${imei}'`,
         );
 
         return updateQuery;

@@ -48,7 +48,6 @@ server.on("upgrade", async function upgrade(request, socket, head) {
 
         if (clientDetails.size) {
             for (const i of clientDetails) {
-                console.log("Listing clients ", i[1].imei);
                 if (i[1].imei === client_imei) {
                     socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
                     socket.destroy();
