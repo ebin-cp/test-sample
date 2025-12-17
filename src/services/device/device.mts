@@ -13,8 +13,8 @@ export class DeviceService {
     async get(imei?: string) {
         const getQuery = await this.db_connection.query(
             imei
-                ? `SELECT imei,api_keys,tags,fields FROM devices WHERE imei=${imei}`
-                : "SELECT imei,api_keys,tags,fields FROM devices",
+                ? `SELECT imei,api_keys,presence FROM devices WHERE imei=${imei}`
+                : "SELECT imei,api_keys,presence FROM devices",
         );
 
         return getQuery;
@@ -25,26 +25,31 @@ export class DeviceService {
             deviceId: ulid(),
             imei: imei,
             api_keys: { key: ulid(), created_at: Date.now() },
-            tags: [{ key: "tag_1", value: "value_1" }],
-            fields: [{ key: "tag_1", value: "value_1" }],
+            tags: [{ key: "truck_id", value: "000000" }],
+            fields: [{ key: "field_01", value: "value_01" }],
+            presence: `disconnected ${Date.now()}`,
             created_at: Date.now(),
             modified_at: Date.now(),
         };
 
         const insertQuery = await this.db_connection.query(
-            "INSERT INTO devices (deviceId, imei, api_keys,tags,fields,created_at,modified_at) VALUES (?,?,?,?,?,?,?)",
+            "INSERT INTO devices (deviceId, imei, api_keys,tags,fields,presence,created_at,modified_at) VALUES (?,?,?,?,?,?,?,?)",
             [
                 device.deviceId,
                 device.imei,
                 JSON.stringify(device.api_keys),
                 JSON.stringify(device.tags),
                 JSON.stringify(device.fields),
+                device.presence,
                 device.created_at,
                 device.modified_at,
             ],
         );
 
-        return { result: `${insertQuery}`, key: device.api_keys };
+        if (insertQuery.affectedRows > 0) {
+            return { result: "Success", key: device.api_keys };
+        }
+        return { result: "Failure" };
     }
 
     async insert_monitorlog(msg: string) {
@@ -83,7 +88,10 @@ export class DeviceService {
                         console.log(err);
                     });
 
-                console.log(insertQuery);
+                console.log(
+                    `${insertQuery.affectedRows > 0 ? "Failed" : "Successful"
+                    } measurement insert`,
+                );
             }
         }
         return { result: " " };
@@ -99,5 +107,13 @@ export class DeviceService {
         );
 
         return getQuery;
+    }
+
+    async device_presence(imei: string, event: string) {
+        const updateQuery = await this.db_connection.query(
+            `UPDATE devices SET presence = CONCAT('${event} ', UNIX_TIMESTAMP() * 1000) WHERE imei = ${imei}`,
+        );
+
+        return updateQuery;
     }
 }

@@ -4,6 +4,7 @@ USE genrobotics;
 CREATE TABLE devices (
     deviceId VARCHAR(30) PRIMARY KEY,
     imei VARCHAR(50) UNIQUE NOT NULL,
+    presence VARCHAR(100) NOT NULL,
     api_keys JSON,
     tags JSON,
     fields JSON,
@@ -17,7 +18,7 @@ ADD CONSTRAINT unique_imei UNIQUE (imei);
 CREATE TABLE device_monitor_log (
     id VARCHAR(30) PRIMARY KEY,
     imei VARCHAR(50) NOT NULL,
-    measurement VARCHAR(255),
+    measurement VARCHAR(255) NOT NULL,
     fields JSON,
     tags JSON,
     timestamp BIGINT NOT NULL,

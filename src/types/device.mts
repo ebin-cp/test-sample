@@ -7,6 +7,7 @@ export const DEVICE_SCHEMA = z.object({
         key: z.string(),
         created_at: z.number,
     }),
+    presence: z.string(),
     tags: z
         .object({
             key: z.string(),

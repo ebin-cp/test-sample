@@ -3,11 +3,16 @@ import connection from "../services/db-connection/db-connection.mjs";
 import { DeviceService } from "../services/device/device.mjs";
 import getRequestBody from "../utils/get-request-body.mjs";
 
-async function deviceRoutes(req: IncomingMessage, ws_msg?: string) {
+async function deviceRoutes(
+    req: IncomingMessage,
+    ws_msg?: { event: string; message: string },
+) {
     const url_parsed = new URL(
         `http://${process.env.HOST ?? "localhost"}${req.url}`,
     );
-    const routeKey: string = ws_msg ? "ws_msg" : `${req.method} ${url_parsed.pathname}`;
+    const routeKey: string = ws_msg
+        ? ws_msg.event
+        : `${req.method} ${url_parsed.pathname}`;
     const devices = new DeviceService(connection);
     const response: { statusCode: number; body: object | string } = {
         statusCode: 403,
@@ -61,10 +66,22 @@ async function deviceRoutes(req: IncomingMessage, ws_msg?: string) {
             response.statusCode = 200;
             break;
         }
-        case "ws_msg": {
+        case "ws_presence_msg": {
             console.log("Inserting");
             if (ws_msg) {
-                await devices.insert_monitorlog(ws_msg);
+                const [imei, event] = ws_msg.message.split(" ");
+                if (!imei || !event) {
+                    response.statusCode = 400;
+                    break;
+                }
+                await devices.device_presence(imei, event);
+            }
+            break;
+        }
+        case "ws_measurements_msg": {
+            console.log("Inserting");
+            if (ws_msg) {
+                await devices.insert_monitorlog(ws_msg.message);
             }
             break;
         }

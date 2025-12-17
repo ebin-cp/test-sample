@@ -1,14 +1,6 @@
 # IoT Device Server
 
-A real-time IoT data collection server that accepts device connections via WebSocket and HTTP, storing time-series data in InfluxDB line protocol format.
-
-## Features
-
-- **Device Registration**: Secure device registration with API key generation
-- **Real-time Data Ingestion**: WebSocket support for live data streaming
-- **Time-series Data Storage**: Store measurements in InfluxDB line protocol format
-- **Query API**: Retrieve historical device measurements
-- **Containerized Deployment**: Docker Compose setup for easy deployment
+A real-time IoT data collection server that accepts device connections via WebSocket and HTTP, storing time-series data.
 
 ## Architecture
 
@@ -52,6 +44,7 @@ Register a new device and receive an API key.
 
 ```json
 {
+    "result": "success",
     "key": {
         "key": "<api-key",
         "created_at": "<timestamp>"
