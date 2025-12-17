@@ -89,9 +89,13 @@ export class DeviceService {
         return { result: " " };
     }
 
-    async get_monitorlog(imei: string) {
+    async get_monitorlog(
+        imei: string,
+        measurement: string,
+        timeperiod: string[],
+    ) {
         const getQuery = await this.db_connection.query(
-            `SELECT imei,measurement,tags,fields,timestamp FROM devices_monitorlog WHERE imei=${imei} ORDER BY timestamp DESC LIMIT 1000`,
+            `SELECT imei,measurement,tags,fields,DATE_FORMAT(FROM_UNIXTIME(timestamp / 1000000000), '%Y-%m-%dT%T.%f') AS iso_time FROM device_monitor_log WHERE imei='${imei}' AND measurement='${measurement}' AND timestamp BETWEEN ${timeperiod[0]} AND ${timeperiod[1]} ORDER BY timestamp ASC LIMIT 1000`,
         );
 
         return getQuery;
