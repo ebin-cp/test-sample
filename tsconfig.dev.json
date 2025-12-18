@@ -17,6 +17,12 @@
 		"removeComments": true,
 		"allowJs": false
 	},
-	"exclude": ["node_modules", "**/*.test.ts", "./dist/**/*", "aws-api-gateway"],
+	"exclude": [
+		"node_modules",
+		"**/*.test.ts",
+		"./dist/**/*",
+		"aws-api-gateway",
+		"tests"
+	],
 	"include": ["dev/**/*", "src/**/*", ".env"]
 }
