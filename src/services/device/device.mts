@@ -1,12 +1,12 @@
-import * as mariadb from "mariadb";
+import type { PoolConnection } from "mariadb";
 import type { Device } from "../../types/device.mjs";
 import { ulid } from "ulid";
 import influx_line_protocol_parser from "../../utils/influx-line-protocol-parser.mjs";
 import type { InfluxLineParsed } from "../../types/message.mjs";
 
 export class DeviceService {
-    db_connection: mariadb.PoolConnection;
-    constructor(db: mariadb.PoolConnection) {
+    db_connection: PoolConnection;
+    constructor(db: PoolConnection) {
         this.db_connection = db;
     }
 
@@ -64,13 +64,8 @@ export class DeviceService {
             return msg_to_json.err;
         }
 
-        console.log(JSON.stringify(msg_to_json));
-
-        console.log(JSON.stringify(msg_to_json.res));
-
         for (const log_item of msg_to_json.res) {
             const imei = log_item.tags.filter((i) => i.key === "imei")[0]?.value;
-            console.log(imei);
             if (imei) {
                 const insertQuery = await this.db_connection
                     .query(

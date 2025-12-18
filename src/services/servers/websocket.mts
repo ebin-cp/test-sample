@@ -37,7 +37,7 @@ wss.on(
 
             if (details) {
                 console.log(
-                    `Received message from IP ${details.api_key}: ${data.toString()}`,
+                    `Received message from IMEI (${details.imei}): \n${data.toString()}`,
                 );
             } else {
                 console.warn("Details not found for this client.");
