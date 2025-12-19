@@ -10,9 +10,11 @@ const ws_msg_interval = Number(`${__ENV.WS_MSG_INTERVAL}`);
 
 export const options = {
     vus: 50, // 50 simultaneous clients
-    duration: "1", // run the test for 1 minute
-    registrations_total: ["count >= 50"],
-    ws_metrics_sent_msgs: ["count >= 10000"],
+    duration: "1m", // run the test for 1 minute
+    thresholds: {
+        registrations_total: ["count >= 50"],
+        ws_metrics_sent_msgs: ["count >= 10000"],
+    },
 };
 
 // 1. SETUP: Runs once before the test starts
