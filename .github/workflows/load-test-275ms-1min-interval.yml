@@ -1,0 +1,52 @@
+name: WebSocket Load Test with 275ms interval
+on: 
+  workflow_dispatch:
+
+jobs:
+  load-test-with-docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start Services
+        run: docker compose -f ./docker/v1/docker-compose.yml up -d
+
+      - name: Wait for Services to be Ready
+        run: |
+          sleep 10 
+          curl --retry 5 --retry-connrefused http://localhost:8883/health
+
+      - name: Setup Grafana K6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Execute Test
+        run: k6 run tests/load-test-1min.js --summary-mode full
+        env:
+          WS_MSG_INTERVAL: 100
+
+      - name: Get Devices Count
+        run: |
+          docker exec mariadb mariadb \
+            -u root \
+            -pCRMvizzYgOrl4ljB2uY9MtkLhIIpucKx\
+            -e "SELECT COUNT(*) FROM genrobotics.devices;"
+
+      - name: Get Log Messages Count
+        run: |
+          docker exec mariadb mariadb \
+            -u root \
+            -pCRMvizzYgOrl4ljB2uY9MtkLhIIpucKx\
+            -e "SELECT COUNT(*) FROM genrobotics.device_monitor_log;"
+
+      - name: Upload k6 Summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: websocket-test-summary
+          path: summary.json
+          retention-days: 7
+
+      - name: Stop Services
+        if: always()
+        run: docker compose -f ./docker/v1/docker-compose.yml down -v
