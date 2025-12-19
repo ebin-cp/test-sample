@@ -1,5 +1,5 @@
-name: WebSocket Load Test with 100ms interval
-on:
+name: WebSocket Load Test with 250ms interval
+on: 
   workflow_dispatch:
 
 jobs:
