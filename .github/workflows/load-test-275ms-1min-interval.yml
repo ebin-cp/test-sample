@@ -24,7 +24,7 @@ jobs:
       - name: Execute Test
         run: k6 run tests/load-test-1min.js --summary-mode full
         env:
-          WS_MSG_INTERVAL: 100
+          WS_MSG_INTERVAL: 275
 
       - name: Get Devices Count
         run: |
