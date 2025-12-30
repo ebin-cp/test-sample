@@ -29,7 +29,10 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: k6 run tests/load-test.js
+        run: |
+          # We MUST add the export flag so summary.json is created
+          # We use 'tee' to save the console output for our grep command
+          k6 run --summary-export=summary.json tests/load-test.js 2>&1 | tee k6_output.log
         env:
           WS_MSG_INTERVAL: 300
 
