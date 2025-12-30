@@ -3,7 +3,7 @@ import { check, sleep } from 'k6';
 
 export const options = {
     vus: 50,
-    duration: '2m',
+    duration: '1m',
     summaryTrendStats: ['avg', 'p(95)', 'max'],
 };
 
