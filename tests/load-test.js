@@ -1,11 +1,16 @@
 import http from "k6/http";
 import * as ulid from "https://esm.run/ulid";
 import ws from "k6/ws";
-import { check, fail } from "k6";
+import { check, fail, sleep } from "k6";
 import { Counter } from "k6/metrics";
 
 const registrationCount = new Counter("registrations_total");
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
+
+// New counters for API checks
+export const device_list_checks = new Counter("device_list_checks");
+export const device_logs_checks = new Counter("device_logs_checks");
+
 const ws_msg_interval = Number(`${__ENV.WS_MSG_INTERVAL}`);
 
 export const options = {
@@ -13,7 +18,7 @@ export const options = {
     duration: "1m",
     thresholds: {
         registrations_total: ["count >= 50"],
-        ws_metrics_sent_msgs: ["count > 0"],
+        ws_metrics_sent_msgs: ["count > 0"], // sanity check
     },
 };
 
@@ -26,9 +31,17 @@ export function setup() {
         const payload = JSON.stringify({ imei });
         const params = { headers: { "Content-Type": "application/json" } };
 
-        const res = http.post("http://localhost:8883/api/v1/device", payload, params);
+        let res;
+        // Retry for CI robustness
+        for (let attempt = 0; attempt < 5; attempt++) {
+            res = http.post("http://localhost:8883/api/v1/device", payload, params);
+            if (res.status === 200) break;
+            sleep(2);
+        }
 
-        if (res.status !== 200) fail(`Device create failed: ${res.body}`);
+        if (res.status !== 200) {
+            fail(`Device create failed: ${res.body}`);
+        }
 
         const body = res.json();
         if (body.result !== "success" || !body.key?.key) {
@@ -74,48 +87,42 @@ export default function (data) {
         }
     );
 
-    check(res, {
-        "ws connected": (r) => r && r.status === 101,
-    });
+    check(res, { "ws connected": (r) => r && r.status === 101 });
 }
 
 /* ---------------- API VERIFICATION ---------------- */
 function checkDeviceList(expectedCount) {
     const res = http.get("http://localhost:8883/api/v1/devices");
 
-    check(res, {
-        "device list status 200": (r) => r.status === 200,
-    }) || fail("Device list API failed");
+    check(res, { "device list status 200": (r) => r.status === 200 }) ||
+        fail("Device list API failed");
 
     const body = res.json();
-
     check(body, {
         "devices array exists": (b) => Array.isArray(b.devices),
         "device count correct": (b) => b.devices.length === expectedCount,
     }) || fail(`Expected ${expectedCount} devices`);
+
+    device_list_checks.add(1);
 }
 
 function checkDeviceLogs(device) {
     const res = http.get(
         `http://localhost:8883/api/v1/device/${device.imei}/logs`,
-        {
-            headers: {
-                Authorization: `${device.imei} ${device.api_key}`,
-            },
-        }
+        { headers: { Authorization: `${device.imei} ${device.api_key}` } }
     );
 
-    check(res, {
-        "log api status 200": (r) => r.status === 200,
-    }) || fail(`Log API failed for ${device.imei}`);
+    check(res, { "log api status 200": (r) => r.status === 200 }) ||
+        fail(`Log API failed for ${device.imei}`);
 
     const body = res.json();
-
     check(body, {
         "logs exist": (b) => Array.isArray(b.logs),
         "logs not empty": (b) => b.logs.length > 0,
-        "imei match": (b) => b.logs.every(l => l.imei === device.imei),
+        "imei match": (b) => b.logs.every((l) => l.imei === device.imei),
     }) || fail(`Invalid logs for ${device.imei}`);
+
+    device_logs_checks.add(1);
 }
 
 /* ---------------- TEARDOWN ---------------- */
@@ -131,7 +138,5 @@ export function teardown(data) {
 
 /* ---------------- SUMMARY ---------------- */
 export function handleSummary(data) {
-    return {
-        "summary.json": JSON.stringify(data),
-    };
+    return { "summary.json": JSON.stringify(data) };
 }

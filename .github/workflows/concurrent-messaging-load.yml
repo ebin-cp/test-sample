@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [300]
+        WS_MSG_INTERVAL: [300, 400, 500]
 
     timeout-minutes: 20
 
@@ -30,24 +30,52 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for Services
+      - name: Wait for Device API to be Ready
         run: |
-          sleep 10
-          curl --retry 5 --retry-connrefused http://localhost:8883/health
+          for i in {1..30}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X POST http://localhost:8883/api/v1/device \
+              -H "Content-Type: application/json" \
+              -d '{"imei":"ci-readiness-check"}')
+            if [ "$STATUS" = "200" ]; then
+              echo "Device API is ready"
+              exit 0
+            fi
+            echo "Waiting for Device API... ($i)"
+            sleep 2
+          done
+          echo "::error::Device API never became ready"
+          exit 1
 
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
-      - name: Execute Test
+      - name: Execute k6 Test
         run: k6 run tests/load-test.js --summary-mode full
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
-      - name: Extract k6 WS Messages Sent
+      - name: Extract k6 Metrics
         run: |
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count' summary.json)
+          DEVICE_LIST_OK=$(jq '.metrics.device_list_checks.values.count' summary.json)
+          DEVICE_LOGS_OK=$(jq '.metrics.device_logs_checks.values.count' summary.json)
+
           echo "WS_SENT=$WS_SENT" >> $GITHUB_ENV
-          echo "WS messages sent: $WS_SENT"
+          echo "DEVICE_LIST_OK=$DEVICE_LIST_OK" >> $GITHUB_ENV
+          echo "DEVICE_LOGS_OK=$DEVICE_LOGS_OK" >> $GITHUB_ENV
+
+      - name: Compare and Validate API Checks
+        run: |
+          if [ "$DEVICE_LIST_OK" -lt 1 ]; then
+            echo "::error::Device list API verification failed"
+            exit 1
+          fi
+          if [ "$DEVICE_LOGS_OK" -lt 1 ]; then
+            echo "::error::Device logs API verification failed"
+            exit 1
+          fi
+          echo "Success: Device list and device logs APIs verified"
 
       - name: Get Log Messages Count
         env:
@@ -57,16 +85,16 @@ jobs:
             -e "SELECT COUNT(*) FROM ${{ secrets.DB_NAME }}.device_monitor_log;")
           echo "ROW_COUNT=$ROW_COUNT" >> $GITHUB_ENV
 
-      - name: Compare and Validate
+      - name: Compare and Validate DB Logs
         run: |
           EXPECTED=$(( WS_SENT * 4 ))
           echo "Expected rows: $EXPECTED"
           echo "Actual rows: $ROW_COUNT"
-
           if [ "$ROW_COUNT" -ne "$EXPECTED" ]; then
             echo "::error::Mismatch in log rows"
             exit 1
           fi
+          echo "Success: Log row count matches"
 
       - name: Stop Services
         if: always()
