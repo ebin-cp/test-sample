@@ -29,7 +29,8 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: k6 run tests/load-test.js
+        run: |
+          k6 run --summary-export=summary.json tests/load-test.js > k6_output.log 2>&1
         env:
           WS_MSG_INTERVAL: 300
 
@@ -48,13 +49,20 @@ jobs:
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          # 1. Capture k6 logs to extract the [RESULT] tags
-          # We search the k6 execution output for our custom tags
-          API_DEVICES_RETRIEVED=$(docker logs k6_container 2>&1 | grep "\[RESULT_DEVICES\]" | awk '{print $NF}' || echo "0")
-          API_LOGS_RETRIEVED=$(docker logs k6_container 2>&1 | grep "\[RESULT_LOGS\]" | awk '{print $NF}' || echo "0")
+          # Check if summary.json exists before proceeding
+          if [ ! -f "summary.json" ]; then
+            echo "::error::summary.json was not generated! Check k6_output.log for errors."
+            cat k6_output.log
+            exit 1
+          fi
 
-          # 2. Extract standard metrics
+          # 1. Scrape k6_output.log for [RESULT] tags
+          API_DEVICES_RETRIEVED=$(grep "\[RESULT_DEVICES\]" k6_output.log | awk '{print $NF}' || echo "0")
+          API_LOGS_RETRIEVED=$(grep "\[RESULT_LOGS\]" k6_output.log | awk '{print $NF}' || echo "0")
+
+          # 2. Extract standard k6 metrics
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          API_FAILS=$(jq '.metrics.checks.values.fails // 0' summary.json)
           EXPECTED_LOGS=$(( WS_SENT * 4 ))
           
           # 3. Database counts
