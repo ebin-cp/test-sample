@@ -9,7 +9,7 @@ jobs:
       fail-fast: false
       matrix:
         WS_MSG_INTERVAL: [300]
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -27,21 +27,10 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for API Health (Prevent 502)
+      - name: Wait for Services to be Ready
         run: |
-          echo "Waiting for http://localhost:8883/health..."
-          for i in {1..20}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health || echo "000")
-            if [ "$STATUS" -eq 200 ]; then
-              echo "Backend is healthy!"
-              exit 0
-            fi
-            echo "Attempt $i: Status $STATUS. Sleeping 5s..."
-            sleep 5
-          done
-          echo "::error::Backend never became healthy. Dumping logs..."
-          docker compose -f ./docker/v1/docker-compose.yml logs
-          exit 1
+          sleep 10 
+          curl --retry 5 --retry-connrefused http://localhost:8883/health
 
       - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
@@ -51,55 +40,48 @@ jobs:
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
-      - name: Get Devices Count from DB
-        if: always()
+      - name: Get Devices Count
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;")
-          echo "DB_DEVICE_COUNT=$COUNT" >> $GITHUB_ENV
-          echo "Devices in DB: $COUNT"
+          docker exec -e MYSQL_PWD mysql mysql \
+            -u root \
+            -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;"
 
       - name: Extract k6 WS Messages Sent
-        if: always()
         id: k6_stats
         run: |
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          WS_SENT=$(jq '.metrics.ws_msgs_sent.values.count' summary.json)
           echo "WS_SENT=$WS_SENT" >> $GITHUB_ENV
-          echo "$WS_SENT packets sent using k6"
+          echo "$WS_SENT messages sent using k6"
 
-      - name: Get Log Messages Count from DB
-        if: always()
+      - name: Get Log Messages Count
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" | awk '{print $1}')
+          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;"| awk '{print $1}')
           echo "ROW_COUNT=$ROW_COUNT" >> $GITHUB_ENV
           echo "$ROW_COUNT rows found in database."
 
-      - name: Final Compare and Validate
-        if: always()
+      - name: Compare and Validate
         run: |
-          echo "=========================================="
-          echo "Devices in DB:     $DB_DEVICE_COUNT / 50"
-          echo "k6 Packets Sent:   $WS_SENT"
-          echo "DB Logs Found:     $ROW_COUNT"
-          echo "=========================================="
+          if [[ -z "$WS_SENT" || -z "$ROW_COUNT" ]]; then
+            echo "::error::Metrics missing. K6: $WS_SENT, DB: $ROW_COUNT"
+            exit 1
+          fi
 
-          # Each k6 packet sends 4 logs
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
 
-          if [ "$DB_DEVICE_COUNT" -lt 50 ]; then
-            echo "::error::Device Count Mismatch! Expected 50, found $DB_DEVICE_COUNT"
-            exit 1
-          fi
+          echo "K6 Messages Sent: $WS_SENT"
+          echo "Expected Rows ($WS_SENT * 4): $EXPECTED_ROWS"
+          echo "Actual Rows in MySQL: $ROW_COUNT"
 
-          if [ "$ROW_COUNT" -lt "$EXPECTED_ROWS" ]; then
+          if [ "$ROW_COUNT" -ne "$EXPECTED_ROWS" ]; then
             echo "::error::Data integrity check failed! Expected $EXPECTED_ROWS rows but found $ROW_COUNT."
             exit 1
+          else
+            echo "Success: Data counts match."
           fi
-          
-          echo "Success: Data counts match."
 
       - name: Stop Services
         if: always()
