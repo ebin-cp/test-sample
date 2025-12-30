@@ -1,7 +1,7 @@
 name: 50-Device Concurrent Load Test (Optimized)
 on:
   push:
-    branches: [feat/api-test-k6]
+    branches: [main]
   workflow_dispatch: 
 
 jobs:
