@@ -31,20 +31,10 @@ jobs:
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
       # ✅ Wait for API container health
-      - name: Wait for API container to be healthy
+      - name: Wait for Services to be Ready
         run: |
-          CONTAINER_NAME=$(docker compose -f ./docker/v1/docker-compose.yml ps -q api)
-          for i in {1..30}; do
-            STATUS=$(docker inspect -f '{{.State.Health.Status}}' $CONTAINER_NAME)
-            if [ "$STATUS" = "healthy" ]; then
-              echo "API container is healthy"
-              exit 0
-            fi
-            echo "Waiting for container health... ($i)"
-            sleep 2
-          done
-          echo "::error::API container never became healthy"
-          exit 1
+          sleep 10 
+          curl --retry 5 --retry-connrefused http://localhost:8883/health
 
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
