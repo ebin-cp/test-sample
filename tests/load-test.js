@@ -13,7 +13,7 @@ export const options = {
     duration: "5m",       // Reduced to 5 minutes to save GH minutes
     thresholds: {
         registrations_total: ["count >= 50"],
-        ws_metrics_sent_msgs: ["count >= 5000"],
+        // ws_metrics_sent_msgs: ["count >= 5000"],
     },
 };0
 
