@@ -8,7 +8,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [300] # Simplified for 1 min test
+        WS_MSG_INTERVAL: [300]
     timeout-minutes: 10
     steps:
       - name: Checkout code
@@ -29,8 +29,9 @@ jobs:
 
       - name: Wait for Services to be Ready
         run: |
-          sleep 15
-          curl --retry 5 --retry-connrefused http://localhost:8883/health
+          echo "Waiting for API and Database to initialize..."
+          sleep 40
+          curl --retry 10 --retry-delay 5 --retry-connrefused http://localhost:8883/health || (docker compose -f ./docker/v1/docker-compose.yml logs && exit 1)
 
       - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
@@ -40,42 +41,46 @@ jobs:
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
-      - name: Extract and Validate Results
-        run: |
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-          LIST_PASSES=$(jq '.metrics.device_list_passes.values.count // 0' summary.json)
-          DATA_PASSES=$(jq '.metrics.log_validation_passes.values.count // 0' summary.json)
-          
-          echo "--- Performance Summary ---"
-          echo "WS Messages Sent: $WS_SENT"
-          echo "Device List Verifications: $LIST_PASSES/50"
-          echo "Database Content Verifications: $DATA_PASSES/50"
-
-          if [ "$LIST_PASSES" -lt 50 ]; then
-            echo "::error::Some devices failed the List Validation."
-            exit 1
-          fi
-
-          if [ "$DATA_PASSES" -lt 50 ]; then
-            echo "::error::Data Integrity Check failed! Some DB records are missing or incorrect."
-            exit 1
-          fi
-
-      - name: Final DB Row Count Check
+      - name: Generate Verification Report
+        if: always()
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          # We send 2 logs per message (cellular, volume)
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count' summary.json)
-          EXPECTED=$(( WS_SENT * 2 ))
-          ACTUAL=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
+          # Extract k6 metrics
+          K6_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          LIST_VAL=$(jq '.metrics.device_list_passes.values.count // 0' summary.json)
+          DATA_VAL=$(jq '.metrics.log_validation_passes.values.count // 0' summary.json)
           
-          echo "Total Expected Rows: $EXPECTED"
-          echo "Total Actual Rows: $ACTUAL"
+          # Extract DB metrics
+          DB_DEVICES=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;")
+          DB_LOGS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
+
+          echo "=========================================="
+          echo "         LOAD TEST FINAL REPORT           "
+          echo "=========================================="
+          echo "Devices (DB):              $DB_DEVICES / 50"
+          echo "k6 WS Packets Sent:        $K6_SENT"
+          echo "Total Logs Found (DB):     $DB_LOGS"
+          echo "List Verification Passes:  $LIST_VAL / 50"
+          echo "Data Content Passes:       $DATA_VAL / 50"
+          echo "=========================================="
+
+          # Final Integrity Logic: 1 k6 packet = 4 DB rows
+          EXPECTED_LOGS=$(( K6_SENT * 4 ))
           
-          if [ "$ACTUAL" -lt "$EXPECTED" ]; then
-             echo "::error::Data loss detected in MySQL!"
-             exit 1
+          if [ "$DB_DEVICES" -lt 50 ]; then
+            echo "::error::Registration Failure: Only $DB_DEVICES devices found in DB."
+            exit 1
+          fi
+
+          if [ "$DB_LOGS" -lt "$EXPECTED_LOGS" ]; then
+            echo "::error::Data Loss Detected! Expected $EXPECTED_LOGS rows but found $DB_LOGS."
+            exit 1
+          fi
+
+          if [ "$LIST_VAL" -lt 50 ] || [ "$DATA_VAL" -lt 50 ]; then
+            echo "::error::API Validation failed for one or more devices."
+            exit 1
           fi
 
       - name: Stop Services
