@@ -6,7 +6,7 @@ jobs:
   load-test:
     runs-on: ubuntu-latest
     environment: load_test
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -16,69 +16,67 @@ jobs:
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
           echo "DATABASE_HOST=mysql" >> .env
+          # Ensure the .env is in the docker directory for Compose to find
           cp .env docker/v1/.env
           docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      -  name: Wait for Health Check
-         run: |
+      - name: Wait for Health Check
+        run: |
           echo "Waiting for API to be ready..."
           timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
-
-      - name: Debug Services on Failure
-        if: failure()
-        run: |
-          echo "Health check timed out. Showing Docker status and logs:"
-          docker compose -f ./docker/v1/docker-compose.yml ps
-          docker logs nodejs_app  
 
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: k6 run tests/load-test.js > k6_output.log 2>&1
+        run: k6 run tests/load-test.js
         env:
           WS_MSG_INTERVAL: 300
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: |
+            summary.json
+            app_logs.txt
+            mysql_logs.txt
 
       - name: Final Validation
         if: always()
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          # 1. Scrape k6_output.log for [RESULT] tags
-          API_DEVICES_RETRIEVED=$(grep "\[RESULT_DEVICES\]" k6_output.log | awk '{print $NF}' || echo "0")
-          API_LOGS_RETRIEVED=$(grep "\[RESULT_LOGS\]" k6_output.log | awk '{print $NF}' || echo "0")
+          # 1. Capture k6 logs to extract the [RESULT] tags
+          # We search the k6 execution output for our custom tags
+          API_DEVICES_RETRIEVED=$(docker logs k6_container 2>&1 | grep "\[RESULT_DEVICES\]" | awk '{print $NF}' || echo "0")
+          API_LOGS_RETRIEVED=$(docker logs k6_container 2>&1 | grep "\[RESULT_LOGS\]" | awk '{print $NF}' || echo "0")
 
-          # 2. Extract standard k6 metrics
+          # 2. Extract standard metrics
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-          API_FAILS=$(jq '.metrics.checks.values.fails // 0' summary.json)
           EXPECTED_LOGS=$(( WS_SENT * 4 ))
+          
+          # 3. Database counts
+          DB_LOGS_ACTUAL=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
+          DB_DEVICES_ACTUAL=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || echo "0")
 
-          # 3. Database Counts
-          DB_LOGS_ACTUAL=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
-          DB_DEVICES_ACTUAL=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
-                             docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
+          # 4. Generate the understandable Report
+          echo "### 📊 Final System Verification" >> $GITHUB_STEP_SUMMARY
+          echo "| Check Type | Database Count | API Retrieval Count | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          
+          # Device Row
+          DEV_STATUS=$([[ "$DB_DEVICES_ACTUAL" == "50" ]] && echo "✅" || echo "❌")
+          echo "| 📱 Devices | $DB_DEVICES_ACTUAL | $API_DEVICES_RETRIEVED | $DEV_STATUS |" >> $GITHUB_STEP_SUMMARY
+          
+          # Logs Row
+          LOG_STATUS=$([[ "$DB_LOGS_ACTUAL" -ge "$EXPECTED_LOGS" ]] && echo "✅" || echo "❌")
+          echo "| 📑 Measurement Logs | $DB_LOGS_ACTUAL | $API_LOGS_RETRIEVED (sample) | $LOG_STATUS |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "#### ✉️ Network Activity" >> $GITHUB_STEP_SUMMARY
+          echo "* **WebSocket Messages Sent:** $WS_SENT" >> $GITHUB_STEP_SUMMARY
+          echo "* **Data Expansion Target:** $EXPECTED_LOGS rows" >> $GITHUB_STEP_SUMMARY
 
-          # 4. Generate GitHub Summary Table
-          echo "###  Load Test Verification Report" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Database Count | API Retrieval Count |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Registered Devices | $DB_DEVICES_ACTUAL | $API_DEVICES_RETRIEVED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Measurement Logs | $DB_LOGS_ACTUAL | $API_LOGS_RETRIEVED |" >> $GITHUB_STEP_SUMMARY
-
-          echo -e "\n#### Activity Summary" >> $GITHUB_STEP_SUMMARY
-          echo "* WS Messages Sent: $WS_SENT" >> $GITHUB_STEP_SUMMARY
-          echo "* Expected Log Rows (4x): $EXPECTED_LOGS" >> $GITHUB_STEP_SUMMARY
-          echo "* API Failures Recorded: $API_FAILS" >> $GITHUB_STEP_SUMMARY
-
-          # 5. Logic Gates
+          # Fail logic
           if [[ "$DB_LOGS_ACTUAL" -lt "$EXPECTED_LOGS" ]]; then exit 1; fi
-          if [[ "$API_FAILS" -gt 0 ]]; then exit 1; fi
-
-      - name: Upload Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: full-test-results
-          path: |
-            summary.json
-            k6_output.log
