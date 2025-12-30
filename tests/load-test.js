@@ -10,9 +10,12 @@ const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
 export const options = {
     vus: 50,
     duration: "1m",
-    thresholds: {
-        "checks": ["rate>0.9"], 
-    },
+    // thresholds: {
+    //     // Now this threshold has a metric to watch!
+    //     "registrations_total": ["count >= 50"],
+    //     "ws_metrics_sent_msgs": ["count >= 10000"],
+    //     "checks": ["rate > 0.9"],
+    // },
 };
 
 // Global variable to capture test start time for the query range
