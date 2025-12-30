@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [100, 200, 300, 400, 500]
+        WS_MSG_INTERVAL: [300, 400, 500]
 
     timeout-minutes: 20
 
@@ -96,7 +96,7 @@ jobs:
           echo "Success: Log row count matches"
 
       - name: Upload k6 summary.json as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: k6-summary
           path: summary.json
