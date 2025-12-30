@@ -67,7 +67,6 @@ export default function(data) {
 
 export function teardown(data) {
     const testDevice = data.keys[0];
-    // Add a 5-second buffer (in nanoseconds) to ensure we capture all data
     const bufferNS = 5000 * 1000000; 
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
     const adjustedStartNS = testStartTimeNS - bufferNS;
@@ -79,28 +78,30 @@ export function teardown(data) {
         } 
     };
 
-    // 1. Verify GET Device List
+    // 1. Check Device List
     const listRes = http.get("http://localhost:8883/api/v1/device", params);
-    check(listRes, { "API: Device List 200": (r) => r.status === 200 });
+    if (listRes.status === 200) {
+        const devices = listRes.json();
+        console.log(`[API Output] Device List Check: Found ${devices.length} devices.`);
+    }
 
-    // 2. Verify GET Measurements
-    // Note: Ensure 'volume' matches exactly what your backend expects
+    // 2. Check Measurements (Log Query)
     const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=volume&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
     const measRes = http.get(measUrl, params);
     
-    const measPass = check(measRes, {
+    if (measRes.status === 200) {
+        const logs = measRes.json();
+        console.log(`[API Output] Log Retrieval Check: Found ${logs.length} volume records for IMEI ${testDevice.imei}.`);
+        if (logs.length > 0) {
+            console.log(`[API Output] Sample Data Point: Value=${logs[0].value} at ${logs[0].timestamp_ns}`);
+        }
+    }
+
+    check(listRes, { "API: Device List 200": (r) => r.status === 200 });
+    check(measRes, {
         "API: Measurements 200": (r) => r.status === 200,
         "API: Measurements Has Data": (r) => r.json() && r.json().length > 0,
     });
-
-    // If it fails, print the details to the GitHub Action logs
-    if (!measPass) {
-        console.log(`--- API DEBUG INFO ---`);
-        console.log(`Status: ${measRes.status}`);
-        console.log(`URL: ${measUrl}`);
-        console.log(`Body: ${measRes.body}`);
-        console.log(`----------------------`);
-    }
 }
 
 export function handleSummary(data) {

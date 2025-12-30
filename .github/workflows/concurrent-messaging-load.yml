@@ -48,29 +48,56 @@ jobs:
             mysql_logs.txt
 
       - name: Final Validation
+        if: always()
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          # 1. DB Row Check
-          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
-          
-          # 2. k6 Metrics extraction from the local summary.json
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count' summary.json)
-          API_FAILS=$(jq '.metrics.checks.values.fails' summary.json)
+          # 1. Extract Metrics from k6 Summary
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          API_FAILS=$(jq '.metrics.checks.values.fails // 0' summary.json)
+          API_PASSES=$(jq '.metrics.checks.values.passes // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
 
-          echo "Validation Report:"
-          echo "WS Messages Sent: $WS_SENT"
-          echo "Expected Rows: $EXPECTED_ROWS"
-          echo "Actual Rows in DB: $ROW_COUNT"
-          echo "API Failures: $API_FAILS"
+          # 2. Extract Data from MySQL
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;")
 
-          if [ "$ROW_COUNT" -lt "$EXPECTED_ROWS" ]; then
-            echo "::error::Data integrity check failed! Missing rows in MySQL."
+          # 3. Print to Console for quick debugging
+          echo "=========================================="
+          echo "      LOAD TEST VALIDATION REPORT         "
+          echo "=========================================="
+          echo "Devices Registered: $DEVICE_COUNT"
+          echo "WS Messages Sent:   $WS_SENT"
+          echo "Expected Log Rows:  $EXPECTED_ROWS"
+          echo "Actual Log Rows:    $ACTUAL_ROWS"
+          echo "API Checks Failed:  $API_FAILS"
+          echo "=========================================="
+
+          # 4. Generate GitHub Job Summary (Visible on the UI)
+          echo "###  Load Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Devices in DB | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "|  WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Rows Expected | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Rows Actual | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  API Checks Passed | $API_PASSES |" >> $GITHUB_STEP_SUMMARY
+          echo "|  API Checks Failed | $API_FAILS |" >> $GITHUB_STEP_SUMMARY
+
+          # 5. Logical Gates (Failing the build)
+          if [ "$DEVICE_COUNT" -lt 50 ]; then
+            echo "::error::Device registration incomplete ($DEVICE_COUNT/50)."
+            exit 1
+          fi
+
+          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]; then
+            echo "::error::Data Loss Detected! Expected $EXPECTED_ROWS, got $ACTUAL_ROWS."
             exit 1
           fi
 
           if [ "$API_FAILS" -gt 0 ]; then
-            echo "::error::API Verification Failed! Teardown checks did not pass."
+            echo "::error::API Retrieval Verification failed ($API_FAILS errors)."
             exit 1
           fi
+
+          echo " All validations passed successfully!"
