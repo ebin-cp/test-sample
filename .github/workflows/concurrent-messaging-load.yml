@@ -27,16 +27,6 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Debug: Wait and Check Logs
-        run: |
-          echo "Giving services 20 seconds to stabilize..."
-          sleep 20
-          docker ps
-          echo "--- NODEJS APP LOGS ---"
-          docker logs nodejs_app || true
-          echo "--- MYSQL LOGS ---"
-          docker logs mysql || true
-
       - name: Wait for Services to be Ready
         run: |
           sleep 20 
