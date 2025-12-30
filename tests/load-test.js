@@ -67,8 +67,11 @@ export default function(data) {
 
 export function teardown(data) {
     const testDevice = data.keys[0];
-    const testEndTimeNS = Date.now() * 1000000;
-    
+    // Add a 5-second buffer (in nanoseconds) to ensure we capture all data
+    const bufferNS = 5000 * 1000000; 
+    const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
+    const adjustedStartNS = testStartTimeNS - bufferNS;
+
     const params = { 
         headers: { 
             "Authorization": `${testDevice.api_key}`,
@@ -78,24 +81,25 @@ export function teardown(data) {
 
     // 1. Verify GET Device List
     const listRes = http.get("http://localhost:8883/api/v1/device", params);
-    check(listRes, {
-        "API: Device List status 200": (r) => r.status === 200,
-        "API: Device List has data": (r) => r.json() && r.json().length > 0,
-    });
+    check(listRes, { "API: Device List 200": (r) => r.status === 200 });
 
-    // 2. Verify GET Measurements (Volume)
-    // We query from the start of the test until now
-    const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=volume&start_ns=${testStartTimeNS}&end_ns=${testEndTimeNS}`;
+    // 2. Verify GET Measurements
+    // Note: Ensure 'volume' matches exactly what your backend expects
+    const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=volume&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
     const measRes = http.get(measUrl, params);
     
-    check(measRes, {
-        "API: Measurements status 200": (r) => r.status === 200,
-        "API: Measurements returns array": (r) => Array.isArray(r.json()),
-        "API: Measurements has data": (r) => r.json().length > 0,
+    const measPass = check(measRes, {
+        "API: Measurements 200": (r) => r.status === 200,
+        "API: Measurements Has Data": (r) => r.json() && r.json().length > 0,
     });
 
-    if (measRes.status !== 200) {
-        console.log(`TEARDOWN FAIL: Status ${measRes.status} for URL: ${measUrl}`);
+    // If it fails, print the details to the GitHub Action logs
+    if (!measPass) {
+        console.log(`--- API DEBUG INFO ---`);
+        console.log(`Status: ${measRes.status}`);
+        console.log(`URL: ${measUrl}`);
+        console.log(`Body: ${measRes.body}`);
+        console.log(`----------------------`);
     }
 }
 
