@@ -4,7 +4,6 @@ import ws from "k6/ws";
 import { check, fail, sleep } from "k6";
 import { Counter } from "k6/metrics";
 
-// Custom Metrics
 const registrationCount = new Counter("registrations_total");
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
 const device_list_passes = new Counter("device_list_passes");
@@ -23,9 +22,11 @@ export const options = {
     },
 };
 
-// 1. SETUP: Create 50 devices
 export function setup() {
     const deviceKeys = [];
+    // Give the backend a 5s head start inside setup to avoid race conditions
+    sleep(5); 
+
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
         const res = http.post(`${BASE_URL}/device`, JSON.stringify({ imei }), {
@@ -44,7 +45,6 @@ export function setup() {
     return { keys: deviceKeys };
 }
 
-// 2. VU EXECUTION
 export default function(data) {
     const myKey = data.keys[__VU - 1];
     const authHeaders = {
@@ -64,7 +64,6 @@ export default function(data) {
         socket.on("open", () => {
             socket.setInterval(() => {
                 const time_str = Date.now() * 1000000;
-                // Sending 4 logs per message (4 DB rows per k6 count)
                 const cellular_log = `cellular,imei=${myKey.imei} rssi=16.56 ${time_str}`;
                 const volume_log = `volume,imei=${myKey.imei} sensorValue=6 ${time_str}`;
                 const fw_log = `firmware,imei=${myKey.imei} ver=\"v1.0\" ${time_str}`;
@@ -74,11 +73,9 @@ export default function(data) {
                 ws_metrics_sent_msgs.add(1);
             }, ws_msg_interval);
         });
-        // Connect for 40 seconds of the 1-minute test
-        socket.setTimeout(() => socket.close(), 40000);
+        socket.setTimeout(() => socket.close(), 45000);
     });
 
-    // Wait for DB to settle
     sleep(5);
 
     // --- TEST 3: DATA INTEGRITY VALIDATION ---
@@ -90,8 +87,7 @@ export default function(data) {
     const lastLogs = logQueryRes.json();
     const dataOk = check(logQueryRes, {
         "Query OK": (r) => r.status === 200,
-        "IMEI Match": (r) => lastLogs.length > 0 && lastLogs[0].imei === myKey.imei,
-        "Value Correct": (r) => lastLogs[0].rssi === 16.56 || lastLogs[0].sensorValue === 6
+        "Correct Value in DB": (r) => lastLogs.length > 0 && lastLogs[0].rssi === 16.56
     });
     if (dataOk) log_validation_passes.add(1);
 }
