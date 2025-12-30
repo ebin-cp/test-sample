@@ -19,11 +19,10 @@ jobs:
           cp .env docker/v1/.env
           docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for Health Check
+      -  name: Wait for Health Check
         run: |
-          echo "Waiting for services to start..."
-          # Increased timeout to 90s and added a curl that shows the error if it fails
-          timeout 90s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; echo "Still waiting for health check..."; done'
+          echo "Waiting for API to be ready..."
+          timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
 
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
@@ -53,7 +52,7 @@ jobs:
                              docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
 
           # 4. Generate GitHub Summary Table
-          echo "### 📊 Load Test Verification Report" >> $GITHUB_STEP_SUMMARY
+          echo "###  Load Test Verification Report" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Database Count | API Retrieval Count |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| Registered Devices | $DB_DEVICES_ACTUAL | $API_DEVICES_RETRIEVED |" >> $GITHUB_STEP_SUMMARY
