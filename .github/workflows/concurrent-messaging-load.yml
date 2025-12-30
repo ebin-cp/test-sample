@@ -1,32 +1,27 @@
-name: 50-Device Concurrent Load Test (Optimized)
-on:
-  push:
-    branches: [main]
-  workflow_dispatch: 
+name: 50-Device Concurrent WebSocket Messaging stress test
+on: [push]
 
 jobs:
   load-test-with-docker:
     runs-on: ubuntu-latest
-    environment: load_test  
+    environment: load_test
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [300, 400, 500] 
-
-    timeout-minutes: 20
-    
+        WS_MSG_INTERVAL: [300] # Simplified for 1 min test
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create .env file from GitHub Secrets
+      - name: Create .env file
         run: |
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_USER=${{ secrets.DB_USER }}" >> .env
           echo "DATABASE_USER_PASSWORD=${{ secrets.DB_USER_PASSWD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
-          echo "DATABASE_HOST=mysql" >> .env
-          echo "DATABASE_PORT=3306" >> .env
+          echo "DATABASE_HOST=${{ secrets.DB_HOST }}" >> .env
+          echo "DATABASE_PORT=${{ secrets.DB_PORT }}" >> .env
           mv .env docker/v1/
 
       - name: Start Services
@@ -34,41 +29,55 @@ jobs:
 
       - name: Wait for Services to be Ready
         run: |
-          sleep 25
+          sleep 15
           curl --retry 5 --retry-connrefused http://localhost:8883/health
 
       - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
 
-      - name: Execute k6 Test
-        id: k6test
-        # കൗണ്ട് കുറവാണെങ്കിലും ടെസ്റ്റ് നിന്നുപോകാതിരിക്കാൻ ഇത് സഹായിക്കും
-        continue-on-error: true 
-        run: k6 run tests/load-test.js --summary-export=summary.json
+      - name: Execute Test
+        run: k6 run tests/load-test.js --summary-mode full
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
-      - name: Validate API and Log Integrity
-        if: always() # ടെസ്റ്റ് എറർ ആയാലും ഇത് റൺ ആകും
+      - name: Extract and Validate Results
         run: |
-          if [ -f summary.json ]; then
-            CHECK_RATE=$(jq '.metrics.checks.values.rate' summary.json)
-            echo "API Validation Pass Rate: $CHECK_RATE"
-          else
-            echo "Summary file not found. Test might have crashed."
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          LIST_PASSES=$(jq '.metrics.device_list_passes.values.count // 0' summary.json)
+          DATA_PASSES=$(jq '.metrics.log_validation_passes.values.count // 0' summary.json)
+          
+          echo "--- Performance Summary ---"
+          echo "WS Messages Sent: $WS_SENT"
+          echo "Device List Verifications: $LIST_PASSES/50"
+          echo "Database Content Verifications: $DATA_PASSES/50"
+
+          if [ "$LIST_PASSES" -lt 50 ]; then
+            echo "::error::Some devices failed the List Validation."
             exit 1
           fi
 
-      - name: Database Row Count Check (Final Verification)
-        if: always() # ഡാറ്റാബേസ് കണക്ക് നിർബന്ധമായും കാണിക്കും
-        env:
-          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
-        run: |
-          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{ secrets.DB_NAME }}.device_monitor_log;")
-          echo "------------------------------------------"
-          echo "FINAL RESULT: Total logs stored in MySQL: $ROW_COUNT"
-          echo "------------------------------------------"
+          if [ "$DATA_PASSES" -lt 50 ]; then
+            echo "::error::Data Integrity Check failed! Some DB records are missing or incorrect."
+            exit 1
+          fi
 
-      - name: Stop and Cleanup
+      - name: Final DB Row Count Check
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+        run: |
+          # We send 2 logs per message (cellular, volume)
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count' summary.json)
+          EXPECTED=$(( WS_SENT * 2 ))
+          ACTUAL=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
+          
+          echo "Total Expected Rows: $EXPECTED"
+          echo "Total Actual Rows: $ACTUAL"
+          
+          if [ "$ACTUAL" -lt "$EXPECTED" ]; then
+             echo "::error::Data loss detected in MySQL!"
+             exit 1
+          fi
+
+      - name: Stop Services
         if: always()
         run: docker compose -f ./docker/v1/docker-compose.yml down -v
