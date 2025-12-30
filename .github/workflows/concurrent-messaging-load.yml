@@ -29,10 +29,7 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: |
-          # We MUST add the export flag so summary.json is created
-          # We use 'tee' to save the console output for our grep command
-          k6 run --summary-export=summary.json tests/load-test.js 2>&1 | tee k6_output.log
+        run: k6 run tests/load-test.js
         env:
           WS_MSG_INTERVAL: 300
 
@@ -62,33 +59,44 @@ jobs:
           API_FAILS=$(jq '.metrics.checks.values.fails // 0' summary.json)
           API_PASSES=$(jq '.metrics.checks.values.passes // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
-          
-          # Scrape the API retrieval counts from k6 logs
-          API_DEVICES_RETRIEVED=$(grep "\[RESULT_DEVICES\]" k6_output.log | sed 's/.*: //' | awk '{print $1}' || echo "0")
 
-          # 2. Extract Data from MySQL
+          # 2. Extract Data from MySQL (Fixed Syntax)
+          # We call /usr/bin/mysql explicitly to avoid the PATH error
           ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
+          
           DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
                          docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
 
-          # 3. Generate GitHub Job Summary
-          echo "### Load Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | DB Actual | API Retrieved |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "|  Devices | $DEVICE_COUNT | $API_DEVICES_RETRIEVED |" >> $GITHUB_STEP_SUMMARY
-          echo "|  WS Messages | $WS_SENT | - |" >> $GITHUB_STEP_SUMMARY
-          echo "|  Rows (4x) | $ACTUAL_ROWS / $EXPECTED_ROWS | - |" >> $GITHUB_STEP_SUMMARY
-          
-          echo -e "\n### API Verification" >> $GITHUB_STEP_SUMMARY
-          echo "* **Total Successful Checks:** $API_PASSES / 3" >> $GITHUB_STEP_SUMMARY
 
-          # 4. "Soft Fail" Logic (Print warnings instead of exiting)
+          # 3. Print Report to Console Logs
+          echo "=========================================="
+          echo "       LOAD TEST VALIDATION REPORT        "
+          echo "=========================================="
+          echo "Devices Registered: $DEVICE_COUNT"
+          echo "WS Messages Sent:   $WS_SENT"
+          echo "Expected DB Rows:   $EXPECTED_ROWS"
+          echo "Actual DB Rows:     $ACTUAL_ROWS"
+          echo "API Failure Count:  $API_FAILS"
+          echo "=========================================="
+
+          # 4. Generate GitHub Job Summary (UI Table)
+          echo "###  Load Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Devices Registered | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "|  WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  API Checks Passed | $API_PASSES |" >> $GITHUB_STEP_SUMMARY
+          echo "|  API Checks Failed | $API_FAILS |" >> $GITHUB_STEP_SUMMARY
+
+          # 5. Fail/Pass Logic (Using [[]] for safer string handling)
           if [[ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
-            echo "::warning title=Data Discrepancy::Expected $EXPECTED_ROWS rows, but only found $ACTUAL_ROWS. Test continued anyway."
+            echo "::error::Data Loss! Expected $EXPECTED_ROWS rows, but only found $ACTUAL_ROWS."
+            exit 1
           fi
 
           if [[ "$API_FAILS" -gt 0 ]]; then
-            echo "::warning title=API Validation Warning::$API_FAILS checks failed during teardown. Test continued anyway."
+            echo "::error::API Verification failed! $API_FAILS checks failed."
+            exit 1
           fi
-
-          echo "Validation complete. Results are posted to the Summary tab."
