@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import type { AuthCallback } from "../../types/websocket.mjs";
-import db_connection from "../db-connection/db-connection.mjs";
+import dbConnection from "../db-connection/db-connection.mjs";
 
 async function authenticate(
     request: IncomingMessage,
@@ -18,16 +18,16 @@ async function authenticate(
     const [imei, key] = request.headers.authorization.split(" ");
 
     console.log("Authentication running for client ", imei, key);
-    const connection = await db_connection();
-    const validate_auth_key = await connection
+    const connection = await dbConnection();
+    const rows = await connection
         .query(
-            `SELECT imei FROM devices WHERE JSON_EXTRACT(api_keys,'$.key')='${key}' AND imei='${imei}'`,
+            `SELECT imei FROM devices WHERE JSON_EXTRACT(api_keys,'$.key')=? AND imei=?`,
+            [key, imei],
         )
         .catch((err) => {
-            console.log(err);
-            return 0;
+            next(err, request);
         });
-    if (!validate_auth_key || !validate_auth_key.length) {
+    if (!rows || !rows.length) {
         next(new Error("Unauthorized"), request);
     }
 

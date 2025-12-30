@@ -1,21 +1,19 @@
 import * as mariadb from "mariadb";
-import { URL } from "node:url";
 
-const connectionUrl = `${process.env.DATABASE_URL}`;
-const parsedUrl = URL.parse(connectionUrl);
 let connection: mariadb.PoolConnection | null = null;
 
-async function db_connection(): Promise<mariadb.PoolConnection> {
+async function dbConnection(): Promise<mariadb.PoolConnection> {
     if (connection) {
         return connection;
     }
     const pool = mariadb.createPool({
-        host: parsedUrl?.protocol.replace(":", ""),
-        port: Number(parsedUrl?.port),
-        user: parsedUrl?.username,
-        database: parsedUrl?.host.split(":")[0],
-        password: parsedUrl?.password,
-        connectionLimit: 5,
+        host: `${process.env.DATABASE_HOST}`,
+        port: Number(`${process.env.DATABASE_PORT}`),
+        user: `${process.env.DATABASE_USER}`,
+        database: `${process.env.DATABASE_NAME}`,
+        password: `${process.env.DATABASE_USER_PASSWORD}`,
+        connectionLimit: 10,
+        allowPublicKeyRetrieval: true,
     });
 
     pool.on("connection", (conn) => {
@@ -23,9 +21,8 @@ async function db_connection(): Promise<mariadb.PoolConnection> {
             console.log("\nDatabase connection error\n", err);
         });
     });
-
     connection = await pool.getConnection();
     return connection;
 }
 
-export default db_connection;
+export default dbConnection;

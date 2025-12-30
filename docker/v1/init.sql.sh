@@ -1,21 +1,23 @@
-CREATE DATABASE IF NOT EXISTS genrobotics;
-USE genrobotics;
+#!/bin/bash
 
-CREATE TABLE devices (
+export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"
+
+mysql -u root<<EOF
+CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;
+USE \`$DB_NAME\`;
+
+CREATE TABLE IF NOT EXISTS devices (
     deviceId VARCHAR(30) PRIMARY KEY,
     imei VARCHAR(50) UNIQUE NOT NULL,
     presence VARCHAR(100) NOT NULL,
     api_keys JSON,
     tags JSON,
     fields JSON,
-    created_at BIGINT NOT NULL, -- Nanosecond timestamp
-    modified_at BIGINT NOT NULL -- Nanosecond timestamp
+    created_at BIGINT NOT NULL,
+    modified_at BIGINT NOT NULL
 );
 
-ALTER TABLE devices
-ADD CONSTRAINT unique_imei UNIQUE (imei);
-
-CREATE TABLE device_monitor_log (
+CREATE TABLE IF NOT EXISTS device_monitor_log (
     id VARCHAR(30) PRIMARY KEY,
     imei VARCHAR(50) NOT NULL,
     measurement VARCHAR(255) NOT NULL,
@@ -31,16 +33,14 @@ CREATE TABLE device_monitor_log (
 CREATE INDEX idx_log_imei_timestamp
 ON device_monitor_log (imei, timestamp);
 
-ALTER TABLE device_monitor_log
-ADD CONSTRAINT unique_id UNIQUE (id);
-
-CREATE USER '01KBW95T0KDJR9DXB76N85YN44'@'%' IDENTIFIED BY '01KBW946RN5ZD4MP9R46R7AP57_01kbw94d5wv0cd4521bw1andra';
+CREATE USER IF NOT EXISTS '$DB_USER'@'%' IDENTIFIED BY '$DB_USER_PASSWD';
 
 GRANT
     SELECT,
     INSERT,
     UPDATE,
     DELETE
-ON genrobotics.* TO '01KBW95T0KDJR9DXB76N85YN44'@'%';
+ON \`$DB_NAME\`.* TO '$DB_USER'@'%';
 
 FLUSH PRIVILEGES;
+EOF

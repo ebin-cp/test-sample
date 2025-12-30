@@ -1,23 +1,26 @@
-import type { PoolConnection } from "mariadb";
+import type * as mariadb from "mariadb";
 import type { Device } from "../../types/device.mjs";
 import { ulid } from "ulid";
 import influx_line_protocol_parser from "../../utils/influx-line-protocol-parser.mjs";
 import type { InfluxLineParsed } from "../../types/message.mjs";
 
 export class DeviceService {
-    db_connection: PoolConnection;
-    constructor(db: PoolConnection) {
-        this.db_connection = db;
+    dbConnection: mariadb.PoolConnection;
+    constructor(db: mariadb.PoolConnection) {
+        this.dbConnection = db;
     }
 
     async get(imei?: string) {
-        const getQuery = await this.db_connection.query(
-            imei
-                ? `SELECT imei,api_keys,presence FROM devices WHERE imei=${imei}`
-                : "SELECT imei,api_keys,presence FROM devices",
-        );
+        const rows = imei
+            ? await this.dbConnection.execute(
+                "SELECT imei,api_keys,presence FROM devices WHERE imei=?",
+                [imei],
+            )
+            : await this.dbConnection.execute(
+                "SELECT imei,api_keys,presence FROM devices",
+            );
 
-        return getQuery;
+        return rows;
     }
 
     async create(imei: string) {
@@ -32,7 +35,7 @@ export class DeviceService {
             modified_at: Date.now(),
         };
 
-        const insertQuery = await this.db_connection.query(
+        const res: mariadb.UpsertResult = await this.dbConnection.execute(
             "INSERT INTO devices (deviceId, imei, api_keys,tags,fields,presence,created_at,modified_at) VALUES (?,?,?,?,?,?,?,?)",
             [
                 device.deviceId,
@@ -46,67 +49,63 @@ export class DeviceService {
             ],
         );
 
-        if (insertQuery.affectedRows > 0) {
+        if (res.affectedRows > 0) {
             return { result: "Success", key: device.api_keys };
         }
         return { result: "Failure" };
     }
 
-    async insert_monitorlog(msg: string) {
-        const msg_to_json = await influx_line_protocol_parser(msg).catch(
+    async insertMonitorLog(msg: string) {
+        const msgToJson = await influx_line_protocol_parser(msg).catch(
             (err: { res: InfluxLineParsed[]; err: Error }) => {
                 return err;
             },
         );
 
-        if (msg_to_json.err) {
-            console.log(msg_to_json.err.message);
-            return msg_to_json.err;
+        if (msgToJson.err) {
+            console.log(msgToJson.err.message);
+            return msgToJson.err;
         }
+        const msgToInsert: (string | number)[][] = [];
 
-        for (const log_item of msg_to_json.res) {
+        for (const log_item of msgToJson.res) {
             const imei = log_item.tags.filter((i) => i.key === "imei")[0]?.value;
             if (imei) {
-                const insertQuery = await this.db_connection
-                    .query(
-                        "INSERT INTO device_monitor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?)",
-                        [
-                            ulid(),
-                            imei,
-                            log_item.measurement,
-                            JSON.stringify(log_item.tags.filter((i) => i.key !== "imei")),
-                            JSON.stringify(log_item.fields),
-                            log_item.timestamp,
-                        ],
-                    )
-                    .catch((err) => {
-                        console.log(err);
-                    });
-
-                console.log(
-                    `${insertQuery.affectedRows < 0 ? "Failed" : "Successful"
-                    } measurement insert`,
-                );
+                msgToInsert.push([
+                    ulid(),
+                    imei,
+                    log_item.measurement,
+                    JSON.stringify(log_item.tags.filter((i) => i.key !== "imei")),
+                    JSON.stringify(log_item.fields),
+                    log_item.timestamp,
+                ]);
             }
+        }
+        const res: mariadb.UpsertResult[] = await this.dbConnection.batch(
+            "INSERT INTO device_monitor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?)",
+            msgToInsert,
+        );
+        for (const r of res) {
+            console.log(
+                `${r.affectedRows < 0 ? "Failed" : "Successful"} measurement insert`,
+            );
         }
         return { result: " " };
     }
 
-    async get_monitorlog(
-        imei: string,
-        measurement: string,
-        timeperiod: string[],
-    ) {
-        const getQuery = await this.db_connection.query(
-            `SELECT imei,measurement,tags,fields,DATE_FORMAT(FROM_UNIXTIME(timestamp / 1000000000), '%Y-%m-%dT%T.%f') AS iso_time FROM device_monitor_log WHERE imei='${imei}' AND measurement='${measurement}' AND timestamp BETWEEN ${timeperiod[0]} AND ${timeperiod[1]} ORDER BY timestamp ASC LIMIT 1000`,
+    async getMonitorLog(imei: string, measurement: string, timeperiod: string[]) {
+        const rows = await this.dbConnection.execute(
+            `SELECT imei,measurement,tags,fields,DATE_FORMAT(FROM_UNIXTIME(timestamp / 1000000000), '%Y-%m-%dT%T.%f') AS iso_time FROM device_monitor_log WHERE imei=? AND measurement=? AND timestamp BETWEEN ? AND ? ORDER BY timestamp ASC LIMIT 1000`,
+            [imei, measurement, ...timeperiod],
         );
 
-        return getQuery;
+        return rows;
     }
 
-    async device_presence(imei: string, event: string) {
-        const updateQuery = await this.db_connection.query(
-            `UPDATE devices SET presence = CONCAT('${event} ', UNIX_TIMESTAMP() * 1000) WHERE imei = '${imei}'`,
+    async devicePresence(imei: string, event: string) {
+        const updateQuery: mariadb.UpsertResult = await this.dbConnection.execute(
+            "UPDATE devices SET presence = CONCAT(?,' ', UNIX_TIMESTAMP() * 1000) WHERE imei = ?",
+            [event, imei],
         );
 
         return updateQuery;

@@ -1,12 +1,15 @@
 services:
-  mariadb:
+  mysql:
     build:
       context: ../..
-      dockerfile: docker/v1/Dockerfile.mariadb
+      dockerfile: docker/v1/Dockerfile.mysql
       no_cache: true
-    container_name: mariadb
+    container_name: mysql
     environment:
-      MARIADB_ROOT_PASSWORD: CRMvizzYgOrl4ljB2uY9MtkLhIIpucKx
+      MYSQL_ROOT_PASSWORD: ${DATABASE_ROOT_PASSWORD}
+      DB_USER: ${DATABASE_USER}
+      DB_USER_PASSWD: ${DATABASE_USER_PASSWORD}
+      DB_NAME: ${DATABASE_NAME}
     ulimits:
       nofile:
         soft: 65536
@@ -15,13 +18,13 @@ services:
         soft: 2048
         hard: 4096
     healthcheck:
-      test: ["CMD", "mariadb-admin", "ping", "-u", "root", "-pCRMvizzYgOrl4ljB2uY9MtkLhIIpucKx"] 
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
       interval: 5s
       timeout: 3s
       retries: 10
       start_period: 30s
     volumes:
-      - mariadb_data:/var/lib/mariadb
+      - mysql_data:/var/lib/mysql
     ports:
       - "3306:3306"
     networks:
@@ -35,7 +38,11 @@ services:
       no_cache: true
     container_name: nodejs_app
     environment:
-      DATABASE_URL: mariadb://01KBW95T0KDJR9DXB76N85YN44:01KBW946RN5ZD4MP9R46R7AP57_01kbw94d5wv0cd4521bw1andra@genrobotics:3306/genrobotics
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_USER_PASSWORD: ${DATABASE_USER_PASSWORD}
+      DATABASE_PORT: ${DATABASE_PORT}
+      DATABASE_HOST: ${DATABASE_HOST}
+      DATABASE_NAME: ${DATABASE_NAME}
       NODE_ENV: production
       SOCKET_PORT: 11758
     ulimits:
@@ -46,7 +53,7 @@ services:
         soft: 2048
         hard: 4096
     depends_on:
-      mariadb:
+      mysql:
         condition: service_healthy
     networks:
       - app_network
@@ -75,7 +82,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  mariadb_data:
+  mysql_data:
 
 networks:
   app_network:

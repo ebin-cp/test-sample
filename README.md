@@ -5,7 +5,7 @@ A real-time IoT data collection server that accepts device connections via WebSo
 ## Architecture
 
 - **Runtime**: Node.js (Latest LTS)
-- **Database**: MariaDB
+- **Database**: MySQL
 - **Reverse Proxy**: Nginx
 - **Protocols**: HTTP/REST, WebSocket
 
@@ -15,6 +15,15 @@ A real-time IoT data collection server that accepts device connections via WebSo
 
 - Docker
 - Docker Compose
+- .env file
+  ```
+  DATABASE_ROOT_PASSWORD=<Root Database Password>
+  DATABASE_USER=<Database Username>
+  DATABASE_USER_PASSWORD=<Database User Password>
+  DATABASE_NAME=<Database Name>
+  DATABASE_HOST=<Database Host (localhost,172.xx.xx.xx, ....)>
+  DATABASE_PORT=<Database Port>
+  ```
 
 ### Running the Server
 
@@ -144,17 +153,16 @@ The server has been tested with 50 concurrent WebSocket connections under variou
 
 |Message Interval|Test Duration|Messages Sent|Messages Received|Success Rate|Status|
 |---|---|---|---|---|---|
-|500ms|1 minute|5,900|5,900|100%|✓ Stable|
-|450ms|1 minute|6,550|6,550|100%|✓ Stable|
-|400ms|1 minute|7,348|7,348|100%|✓ Stable|
-|375ms|1 minute|7,850|7,850|100%|✓ Stable|
-|350ms|1 minute|8,300|8,300|100%|✓ Stable|
-|320ms|1 minute|9,099|9,099|100%|✓ Stable|
-|310ms|1 minute|9,500|9,500|100%|✓ Stable|
-|300ms|1 minute|9,650|8,390|86.9%|⚠ Message Loss|
+|500ms|10 minute|62950|251800|100%|✓ Stable|
+|400ms|10 minute|78700|314800|100%|✓ Stable|
+|300ms|10 minute|104950|419800|100%|✓ Stable|
+|200ms|10 minute|157042|43477|6.9%|⚠ Message Loss|
+|100ms|10 minute|1256316|13886|0.2%|⚠ Message Loss|
+
+> **NOTE**: The test message contains volume,cellular log,firmware info and battery log so the database will have four times the number of rows since we can send multiple measurements in one message and each measurement will be inserted as separate rows.
 
 **Test Configuration:**
 
 - **Concurrent Devices**: 50
 - **Simultaneous Transmission**: All 50 devices sending messages concurrently
-- **Infrastructure**: Containerized deployment (MariaDB, Nginx, Node.js)
+- **Infrastructure**: Containerized deployment (MySQL, Nginx, Node.js)

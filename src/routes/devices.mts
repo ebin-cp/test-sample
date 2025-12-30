@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { DeviceService } from "../services/device/device.mjs";
 import getRequestBody from "../utils/get-request-body.mjs";
-import db_connection from "../services/db-connection/db-connection.mjs";
+import dbConnection from "../services/db-connection/db-connection.mjs";
 
 async function deviceRoutes(
     req: IncomingMessage,
@@ -13,7 +13,7 @@ async function deviceRoutes(
     const routeKey: string = ws_msg
         ? ws_msg.event
         : `${req.method} ${url_parsed.pathname}`;
-    const connection = await db_connection();
+    const connection = await dbConnection();
     const devices = new DeviceService(connection);
     const response: { statusCode: number; body: object | string } = {
         statusCode: 403,
@@ -58,7 +58,7 @@ async function deviceRoutes(
                 break;
             }
 
-            const readReq = await devices.get_monitorlog(
+            const readReq = await devices.getMonitorLog(
                 imei,
                 measurement,
                 timeperiod,
@@ -74,13 +74,13 @@ async function deviceRoutes(
                     response.statusCode = 400;
                     break;
                 }
-                await devices.device_presence(imei, event);
+                await devices.devicePresence(imei, event);
             }
             break;
         }
         case "ws_measurements_msg": {
             if (ws_msg) {
-                await devices.insert_monitorlog(ws_msg.message);
+                await devices.insertMonitorLog(ws_msg.message);
             }
             break;
         }

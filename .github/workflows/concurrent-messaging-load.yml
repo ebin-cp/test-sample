@@ -1,0 +1,65 @@
+name: 50-Device Concurrent Load Test (Optimized)
+on:
+  push:
+    branches: [feat/api-test-k6]
+  workflow_dispatch: # Allows manual run to save minutes
+
+jobs:
+  load-test-with-docker:
+    runs-on: ubuntu-latest
+    environment: load_test
+    strategy:
+      fail-fast: false
+      matrix:
+        WS_MSG_INTERVAL: [300] # Single interval to save time; add more if needed
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file from Secrets
+        run: |
+          echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
+          echo "DATABASE_USER=${{ secrets.DB_USER }}" >> .env
+          echo "DATABASE_USER_PASSWORD=${{ secrets.DB_USER_PASSWD }}" >> .env
+          echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
+          echo "DATABASE_HOST=mysql" >> .env
+          echo "DATABASE_PORT=3306" >> .env
+          mv .env docker/v1/
+
+      - name: Start Services
+        run: docker compose -f ./docker/v1/docker-compose.yml up -d
+
+      - name: Wait for Services
+        run: |
+          sleep 15
+          curl --retry 5 --retry-connrefused http://localhost:8883/health
+
+      - name: Setup Grafana K6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Execute Test
+        run: k6 run tests/load-test.js --summary-mode full
+        env:
+          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
+
+      - name: Validate Test Results
+        run: |
+          # Fails the build if any k6 check fails
+          CHECK_RATE=$(jq '.metrics.checks.values.rate' summary.json)
+          echo "API Pass Rate: $CHECK_RATE"
+          if (( $(echo "$CHECK_RATE < 1.0" | bc -l) )); then
+            echo "::error::API Validation Failed!"
+            exit 1
+          fi
+
+      - name: Final DB Integrity Check
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+        run: |
+          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" | awk '{print $1}')
+          echo "Total Rows in DB: $ROW_COUNT"
+
+      - name: Stop Services
+        if: always()
+        run: docker compose -f ./docker/v1/docker-compose.yml down -v
