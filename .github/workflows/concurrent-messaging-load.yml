@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [300, 400, 500]
+        WS_MSG_INTERVAL: [100, 200, 300, 400, 500]
 
     timeout-minutes: 20
 
@@ -30,21 +30,20 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for Device API to be Ready
+      # ✅ Wait for API container health
+      - name: Wait for API container to be healthy
         run: |
+          CONTAINER_NAME=$(docker compose -f ./docker/v1/docker-compose.yml ps -q api)
           for i in {1..30}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-              -X POST http://localhost:8883/api/v1/device \
-              -H "Content-Type: application/json" \
-              -d '{"imei":"ci-readiness-check"}')
-            if [ "$STATUS" = "200" ]; then
-              echo "Device API is ready"
+            STATUS=$(docker inspect -f '{{.State.Health.Status}}' $CONTAINER_NAME)
+            if [ "$STATUS" = "healthy" ]; then
+              echo "API container is healthy"
               exit 0
             fi
-            echo "Waiting for Device API... ($i)"
+            echo "Waiting for container health... ($i)"
             sleep 2
           done
-          echo "::error::Device API never became ready"
+          echo "::error::API container never became healthy"
           exit 1
 
       - name: Setup k6
@@ -95,6 +94,12 @@ jobs:
             exit 1
           fi
           echo "Success: Log row count matches"
+
+      - name: Upload k6 summary.json as artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: k6-summary
+          path: summary.json
 
       - name: Stop Services
         if: always()
