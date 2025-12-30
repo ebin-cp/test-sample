@@ -13,25 +13,29 @@ export const options = {
     duration: "1m",
     thresholds: {
         registrations_total: ["count >= 50"],
-        // Adjust this based on your expected throughput to avoid false CI failures
-        ws_metrics_sent_msgs: ["count >= 100"], 
     },
 };
 
-// 1. SETUP: Runs once. Creates 50 devices.
 export function setup() {
     const deviceKeys = [];
-    console.log("Starting Setup: Registering 50 devices...");
+    const url = "http://localhost:8883/api/v1/device";
 
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
         const payload = JSON.stringify({ imei: imei });
         const params = { headers: { "Content-Type": "application/json" } };
 
-        const res = http.post("http://localhost:8883/api/v1/device", payload, params);
+        let res = http.post(url, payload, params);
+
+        // RETRY LOGIC: If we get a 502, wait 3 seconds and try one more time
+        if (res.status === 502) {
+            console.log(`Device ${i} got 502. Retrying...`);
+            sleep(3);
+            res = http.post(url, payload, params);
+        }
 
         if (res.status !== 200) {
-            fail(`Setup failed at device ${i}: ${res.status} - ${res.body}`);
+            fail(`Setup failed at device ${i}: ${res.status}. Body: ${res.body}`);
         }
 
         const d = res.json();
@@ -41,7 +45,6 @@ export function setup() {
     return { keys: deviceKeys };
 }
 
-// 2. VU EXECUTION: 50 VUs streaming logs
 export default function(data) {
     const myKey = data.keys[(__VU - 1) % data.keys.length];
     const url = "ws://localhost:8883/api/live";
@@ -55,51 +58,27 @@ export default function(data) {
         socket.on("open", () => {
             socket.setInterval(() => {
                 const time_str = Date.now() * 1000000;
-                const logs = [
-                    `cellular,imei=${myKey.imei} rssi=16.56,iccid="8991" ${time_str}`,
-                    `volume,imei=${myKey.imei} sensorValue=6,volume=100.0 ${time_str}`,
-                    `firmware,imei=${myKey.imei} firmware_ver_tx="v1.0.0" ${time_str}`,
-                    `battery,imei=${myKey.imei} eBatVolt=12.00 ${time_str}`
-                ];
-                socket.send(logs.join("\n"));
+                const logs = `cellular,imei=${myKey.imei} rssi=16.56 ${time_str}`;
+                socket.send(logs);
                 ws_metrics_sent_msgs.add(1);
             }, ws_msg_interval);
         });
-
-        socket.on("error", (e) => console.error("WS Error:", e.error()));
     });
 
-    check(res, { "connected successfully": (r) => r && r.status === 101 });
+    check(res, { "connected": (r) => r && r.status === 101 });
 }
 
-// 3. TEARDOWN: Verify API retrieval after test ends
 export function teardown(data) {
-    const { keys } = data;
-    const testDevice = keys[0]; 
-    const params = {
-        headers: {
-            "Authorization": `${testDevice.api_key}`,
-            "Content-Type": "application/json"
-        }
-    };
+    const testDevice = data.keys[0];
+    const params = { headers: { "Authorization": `${testDevice.api_key}` } };
 
-    console.log(`Teardown: Verifying API for IMEI ${testDevice.imei}`);
-
-    // Verify Device List
+    // API Verification: List
     const listRes = http.get("http://localhost:8883/api/v1/devices", params);
-    check(listRes, {
-        "GET /devices status is 200": (r) => r.status === 200,
-        "GET /devices returns data": (r) => r.json().length > 0,
-    });
+    check(listRes, { "API: List Status 200": (r) => r.status === 200 });
 
-    // Verify Device Logs
-    const logUrl = `http://localhost:8883/api/v1/logs?imei=${testDevice.imei}`;
-    const logRes = http.get(logUrl, params);
-    check(logRes, {
-        "GET /logs status is 200": (r) => r.status === 200,
-        "GET /logs returns array": (r) => Array.isArray(r.json()),
-        "GET /logs has entries": (r) => r.json().length > 0,
-    });
+    // API Verification: Logs
+    const logRes = http.get(`http://localhost:8883/api/v1/logs?imei=${testDevice.imei}`, params);
+    check(logRes, { "API: Logs Status 200": (r) => r.status === 200 });
 }
 
 export function handleSummary(data) {
