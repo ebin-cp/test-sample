@@ -60,14 +60,14 @@ jobs:
           API_PASSES=$(jq '.metrics.checks.values.passes // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
 
-          # 2. Extract Data from MySQL
-          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
+          # 2. Extract Data from MySQL (Fixed Syntax)
+          # We call /usr/bin/mysql explicitly to avoid the PATH error
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
           
-          # Try 'device' then 'devices' to find the device count
-          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
-                         docker exec -e MYSQL_PWD mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "Unknown")
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
+                         docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
 
-          # 3. Print Report to Console Logs for Debugging
+          # 3. Print Report to Console Logs
           echo "=========================================="
           echo "       LOAD TEST VALIDATION REPORT        "
           echo "=========================================="
@@ -79,25 +79,25 @@ jobs:
           echo "=========================================="
 
           # 4. Generate GitHub Job Summary (UI Table)
-          echo "###  Load Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Load Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "|  Devices Registered | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "|  WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "|  Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "|  Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "|  API Checks Passed | $API_PASSES |" >> $GITHUB_STEP_SUMMARY
-          echo "|  API Checks Failed | $API_FAILS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📱 Devices Registered | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| ✉️ WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| 💾 Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| 📥 Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| ✅ API Checks Passed | $API_PASSES |" >> $GITHUB_STEP_SUMMARY
+          echo "| ❌ API Checks Failed | $API_FAILS |" >> $GITHUB_STEP_SUMMARY
 
-          # 5. Fail/Pass Logic
-          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]; then
+          # 5. Fail/Pass Logic (Using [[]] for safer string handling)
+          if [[ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
             echo "::error::Data Loss! Expected $EXPECTED_ROWS rows, but only found $ACTUAL_ROWS."
             exit 1
           fi
 
-          if [ "$API_FAILS" -gt 0 ]; then
-            echo "::error::API Verification failed! $API_FAILS checks failed in teardown."
+          if [[ "$API_FAILS" -gt 0 ]]; then
+            echo "::error::API Verification failed! $API_FAILS checks failed."
             exit 1
           fi
 
-          echo " All tests and data validations passed!"
+          echo "✅ All tests and data validations passed!"
