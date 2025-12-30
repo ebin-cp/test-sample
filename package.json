@@ -2,24 +2,15 @@
 	"name": "genrobotics-gmmamoth-backend",
 	"version": "1.0.0",
 	"scripts": {
-		"devBuild": "npx tsc --project tsconfig.dev.json",
-		"prodBuild": "npx tsc --project tsconfig.prod.json",
-		"start": "node dist/main.mjs",
-		"test_db": "node dist/services/db-connection/db-connection.mjs"
+		"start": "node src/main.js",
+		"test_db": "node dist/services/db-connection/db-connection.js"
 	},
 	"type": "module",
 	"keywords": [],
 	"author": "",
 	"license": "ISC",
 	"devDependencies": {
-		"@biomejs/biome": "1.9.2",
-		"@types/express": "^4.17.21",
-		"@types/jsonwebtoken": "^9.0.7",
-		"@types/node": "^20.19.27",
-		"@types/ws": "^8.18.1",
-		"express": "^4.21.1",
-		"nodemon": "^3.1.7",
-		"typescript": "^5.7.2"
+		"@biomejs/biome": "1.9.2"
 	},
 	"dependencies": {
 		"dotenv": "^16.4.5",

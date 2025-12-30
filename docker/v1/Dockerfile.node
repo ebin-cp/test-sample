@@ -18,7 +18,7 @@ COPY src ./src
 
 COPY libs ./libs
 
-RUN npm install;npm run devBuild
+RUN npm install
 
 EXPOSE 11758
 #CMD ["tail", "-f", "/dev/null"]
