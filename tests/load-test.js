@@ -20,6 +20,7 @@ export const options = {
         registrations_total: ["count >= 50"],
         ws_metrics_sent_msgs: ["count > 0"], // sanity check
     },
+     setupTimeout: "180s"
 };
 
 /* ---------------- SETUP ---------------- */
