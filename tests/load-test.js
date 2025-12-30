@@ -70,7 +70,11 @@ export function teardown(data) {
     const bufferNS = 5000 * 1000000; 
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
     const adjustedStartNS = testStartTimeNS - bufferNS;
-@@ -78,35 +41,26 @@ export function teardown(data) {
+
+    const params = { 
+        headers: { 
+            "Authorization": `${testDevice.api_key}`,
+            "Content-Type": "application/json"
         } 
     };
 
