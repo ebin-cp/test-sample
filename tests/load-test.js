@@ -44,10 +44,17 @@ export default function(data) {
     };
 
     // --- 1. DEVICE LIST VALIDATION ---
+        // --- 1. DEVICE LIST VALIDATION ---
     const deviceListRes = http.get(`${BASE_URL}/devices`, authHeaders);
+    
     check(deviceListRes, { 
         "Device List API OK": (r) => r.status === 200,
-        "Own Device in List": (r) => r.json().some(d => d.imei === myKey.imei)
+        "Own Device in List": (r) => {
+            const body = r.json();
+            // This logic handles both cases: [ ... ] or { "data": [ ... ] }
+            const list = Array.isArray(body) ? body : (body.data || body.devices || []);
+            return list.some(d => d.imei === myKey.imei);
+        }
     });
 
     // --- 2. LOG QUERY VALIDATION ---
