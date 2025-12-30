@@ -24,6 +24,13 @@ jobs:
           echo "Waiting for API to be ready..."
           timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
 
+      - name: Debug Services on Failure
+        if: failure()
+        run: |
+          echo "Health check timed out. Showing Docker status and logs:"
+          docker compose -f ./docker/v1/docker-compose.yml ps
+          docker logs nodejs_app  
+
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
