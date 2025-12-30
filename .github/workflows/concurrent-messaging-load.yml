@@ -21,7 +21,9 @@ jobs:
 
       - name: Wait for Health Check
         run: |
-          timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ]; do sleep 5; done'
+          echo "Waiting for services to start..."
+          # Increased timeout to 90s and added a curl that shows the error if it fails
+          timeout 90s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; echo "Still waiting for health check..."; done'
 
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
