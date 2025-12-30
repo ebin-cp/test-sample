@@ -10,7 +10,7 @@ const ws_msg_interval = Number(`${__ENV.WS_MSG_INTERVAL}`);
 
 export const options = {
     vus: 50, // 50 simultaneous clients
-    duration: "1m", // run the test for 10 minute
+    duration: "2m", // run the test for 10 minute
     registrations_total: ["count >= 50"],
     ws_metrics_sent_msgs: ["count >= 10000"],
 };
@@ -89,5 +89,43 @@ export default function(data) {
 export function handleSummary(data) {
     return {
         "summary.json": JSON.stringify(data), // This creates the file in the workspace
+    };
+}
+
+// 3. TEARDOWN: Runs after the test is finished
+export function teardown(data) {
+    const { keys } = data;
+    const testDevice = keys[0]; // Let's check the first device as a sample
+    const params = {
+        headers: {
+            "Authorization": `${testDevice.api_key}`, // Adjust based on your Auth requirement
+            "Content-Type": "application/json"
+        }
+    };
+
+    // --- A. Verify Device List Retrieval ---
+    const listRes = http.get("http://localhost:8883/api/v1/devices", params);
+    check(listRes, {
+        "Device list status is 200": (r) => r.status === 200,
+        "Device list is not empty": (r) => r.json().length > 0,
+    });
+
+    // --- B. Verify Device Logs Retrieval ---
+    // We fetch logs for the specific IMEI we used during the test
+    const logUrl = `http://localhost:8883/api/v1/logs?imei=${testDevice.imei}`;
+    const logRes = http.get(logUrl, params);
+    
+    check(logRes, {
+        "Logs retrieval status is 200": (r) => r.status === 200,
+        "Logs are returned in array": (r) => Array.isArray(r.json()),
+        "Logs contain expected data": (r) => r.json().length > 0,
+    });
+
+    console.log(`Teardown: Verified API for IMEI ${testDevice.imei}. Found ${logRes.json().length} logs.`);
+}
+
+export function handleSummary(data) {
+    return {
+        "summary.json": JSON.stringify(data),
     };
 }

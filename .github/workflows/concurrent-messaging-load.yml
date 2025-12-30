@@ -40,6 +40,17 @@ jobs:
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
+      - name: Verify API Check Results
+        run: |
+          # Use jq to check if any 'checks' failed in the summary.json
+          FAILED_CHECKS=$(jq '.metrics.checks.values.fails' summary.json)
+          if [ "$FAILED_CHECKS" -gt "0" ]; then
+            echo "::error::API Verification failed! $FAILED_CHECKS checks failed."
+            exit 1
+          else
+            echo "All API verification checks passed."
+          fi
+
       - name: Get Devices Count
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
