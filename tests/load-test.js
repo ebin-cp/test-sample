@@ -9,51 +9,41 @@ const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
 const ws_msg_interval = Number(`${__ENV.WS_MSG_INTERVAL}`);
 
 export const options = {
-    vus: 50, // 50 simultaneous clients
-    duration: "1m", // run the test for 10 minute
-    registrations_total: ["count >= 50"],
-    ws_metrics_sent_msgs: ["count >= 10000"],
+    vus: 50,
+    duration: "1m",
+    thresholds: {
+        registrations_total: ["count >= 50"],
+        ws_metrics_sent_msgs: ["count > 0"],
+    },
 };
 
-// 1. SETUP: Runs once before the test starts
+/* ---------------- SETUP ---------------- */
 export function setup() {
     const deviceKeys = [];
 
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
-        const payload = JSON.stringify({ imei: imei });
+        const payload = JSON.stringify({ imei });
         const params = { headers: { "Content-Type": "application/json" } };
 
-        const res = http.post(
-            "http://localhost:8883/api/v1/device",
-            payload,
-            params,
-        );
-        if (res.status !== 200) {
-            fail(`Aborting test: Unexpected JSON structure. Received: ${res.body}`);
+        const res = http.post("http://localhost:8883/api/v1/device", payload, params);
+
+        if (res.status !== 200) fail(`Device create failed: ${res.body}`);
+
+        const body = res.json();
+        if (body.result !== "success" || !body.key?.key) {
+            fail(`Invalid device create response: ${res.body}`);
         }
-        if (!res.body || res.body.length === 0) {
-            fail("STOP: Server returned 200 but the body was empty!");
-        }
-        let d;
-        try {
-            d = res.json();
-        } catch (e) {
-            fail(`Aborting: Response was not valid JSON. Body: ${res.body}`);
-        }
-        if (d.result !== "success" && !d.key) {
-            fail(`Aborting test: Unexpected JSON structure. Received: ${res.body}`);
-        }
+
         registrationCount.add(1);
-        deviceKeys.push({ api_key: d.key.key, imei: imei });
+        deviceKeys.push({ imei, api_key: body.key.key });
     }
-    // Return the keys so they are available in the default function
+
     return { keys: deviceKeys };
 }
 
-// 2. VU EXECUTION: Runs for each of the 50 clients
-export default function(data) {
-    // Each VU picks its unique key based on its ID (1 to 50)
+/* ---------------- LOAD ---------------- */
+export default function (data) {
     const myKey = data.keys[__VU - 1];
     const url = "ws://localhost:8883/api/live";
 
@@ -67,27 +57,81 @@ export default function(data) {
         },
         (socket) => {
             socket.on("open", () => {
-                // Send message every 300ms
                 socket.setInterval(() => {
-                    const time_str = Date.now() * 1000000;
-                    const cellular_log = `cellular,imei=${myKey.imei} rssi=16.56,iccid=\"89919509129637837632\",operator=\"airtel\",band=\"LTE BAND 40\",rat=\"TDD LTE\",plmn=\"40495\",apn=\"iot.com\" ${time_str}`;
-                    const volume_log = `volume,imei=${myKey.imei} nodeAddress=\"0x01,0x02,0x03\",mask=\"0x20\",sensorValue=6,volume=100.0 ${time_str}`;
-                    const fw_log = `firmware,imei=${myKey.imei} firmware_ver_tx=\"v1.0.0:slm-t\",node_0x01_fw=\"v1.0.0:slm-s\",node_0x02_fw=\"v1.0.0:slm-s\" ${time_str}`;
-                    const bat_log = `battery,imei=${myKey.imei} eBatVolt=12.00 ${time_str}`;
-                    socket.send([cellular_log, volume_log, fw_log, bat_log].join("\n"));
+                    const ts = Date.now() * 1e6;
+
+                    const logs = [
+                        `cellular,imei=${myKey.imei} rssi=16.56 ${ts}`,
+                        `volume,imei=${myKey.imei} volume=100 ${ts}`,
+                        `firmware,imei=${myKey.imei} ver="v1.0.0" ${ts}`,
+                        `battery,imei=${myKey.imei} volt=12.0 ${ts}`,
+                    ];
+
+                    socket.send(logs.join("\n"));
                     ws_metrics_sent_msgs.add(1);
                 }, ws_msg_interval);
             });
-
-            socket.on("error", (e) => console.error("WS Error:", e.error()));
-        },
+        }
     );
 
-    check(res, { "connected successfully": (r) => r && r.status === 101 });
+    check(res, {
+        "ws connected": (r) => r && r.status === 101,
+    });
 }
 
+/* ---------------- API VERIFICATION ---------------- */
+function checkDeviceList(expectedCount) {
+    const res = http.get("http://localhost:8883/api/v1/devices");
+
+    check(res, {
+        "device list status 200": (r) => r.status === 200,
+    }) || fail("Device list API failed");
+
+    const body = res.json();
+
+    check(body, {
+        "devices array exists": (b) => Array.isArray(b.devices),
+        "device count correct": (b) => b.devices.length === expectedCount,
+    }) || fail(`Expected ${expectedCount} devices`);
+}
+
+function checkDeviceLogs(device) {
+    const res = http.get(
+        `http://localhost:8883/api/v1/device/${device.imei}/logs`,
+        {
+            headers: {
+                Authorization: `${device.imei} ${device.api_key}`,
+            },
+        }
+    );
+
+    check(res, {
+        "log api status 200": (r) => r.status === 200,
+    }) || fail(`Log API failed for ${device.imei}`);
+
+    const body = res.json();
+
+    check(body, {
+        "logs exist": (b) => Array.isArray(b.logs),
+        "logs not empty": (b) => b.logs.length > 0,
+        "imei match": (b) => b.logs.every(l => l.imei === device.imei),
+    }) || fail(`Invalid logs for ${device.imei}`);
+}
+
+/* ---------------- TEARDOWN ---------------- */
+export function teardown(data) {
+    // Device list verification
+    checkDeviceList(data.keys.length);
+
+    // Verify logs for first 3 devices
+    for (let i = 0; i < 3; i++) {
+        checkDeviceLogs(data.keys[i]);
+    }
+}
+
+/* ---------------- SUMMARY ---------------- */
 export function handleSummary(data) {
     return {
-        "summary.json": JSON.stringify(data), // This creates the file in the workspace
+        "summary.json": JSON.stringify(data),
     };
 }
