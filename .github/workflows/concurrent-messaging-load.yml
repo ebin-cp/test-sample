@@ -30,11 +30,19 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      # ✅ Wait for API container health
-      - name: Wait for Services to be Ready
+      - name: Wait for Device API
         run: |
-          sleep 10 
-          curl --retry 5 --retry-connrefused http://localhost:8883/health
+          for i in {1..30}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)
+            if [ "$STATUS" = "200" ]; then
+              echo "Device API is ready"
+              exit 0
+            fi
+            echo "Waiting for Device API... ($i)"
+            sleep 2
+          done
+          echo "::error::Device API never became ready"
+          exit 1
 
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
