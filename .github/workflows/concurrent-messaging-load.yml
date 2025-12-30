@@ -1,10 +1,12 @@
 name: 50-Device Load Test and API Verification
+
 on: [push]
 
 jobs:
   load-test:
     runs-on: ubuntu-latest
     environment: load_test
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -14,12 +16,13 @@ jobs:
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
           echo "DATABASE_HOST=mysql" >> .env
-          # Ensure .env is in the same folder as the compose file
-          cp .env docker/v1/.env 
+          # Ensure the .env is in the docker directory for Compose to find
+          cp .env docker/v1/.env
           docker compose -f ./docker/v1/docker-compose.yml up -d
 
       - name: Wait for Health Check
         run: |
+          echo "Waiting for API to be ready..."
           timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
 
       - name: Setup k6
@@ -28,7 +31,6 @@ jobs:
       - name: Execute Test
         run: k6 run tests/load-test.js
         env:
-          # WE REMOVED THE MATRIX AND SET THIS MANUALLY HERE
           WS_MSG_INTERVAL: 300
 
       - name: Capture Logs for Artifacts
@@ -41,7 +43,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results
+          name: load-test-results
           path: |
             summary.json
             app_logs.txt
@@ -59,31 +61,43 @@ jobs:
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
 
           # 2. Extract Data from MySQL
-          # Change 'device' to 'devices' if the error persists
-          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
           
-          # Try 'devices' (plural) as it is the most common naming convention
-          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" || echo "0")
+          # Try 'device' then 'devices' to find the device count
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
+                         docker exec -e MYSQL_PWD mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "Unknown")
 
-          # 3. Generate GitHub Job Summary
+          # 3. Print Report to Console Logs for Debugging
+          echo "=========================================="
+          echo "       LOAD TEST VALIDATION REPORT        "
+          echo "=========================================="
+          echo "Devices Registered: $DEVICE_COUNT"
+          echo "WS Messages Sent:   $WS_SENT"
+          echo "Expected DB Rows:   $EXPECTED_ROWS"
+          echo "Actual DB Rows:     $ACTUAL_ROWS"
+          echo "API Failure Count:  $API_FAILS"
+          echo "=========================================="
+
+          # 4. Generate GitHub Job Summary (UI Table)
           echo "###  Load Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Rows Expected | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Rows Actual | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "| API Checks Passed | $API_PASSES |" >> $GITHUB_STEP_SUMMARY
-          echo "| API Checks Failed | $API_FAILS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Devices Registered | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "|  WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "|  API Checks Passed | $API_PASSES |" >> $GITHUB_STEP_SUMMARY
+          echo "|  API Checks Failed | $API_FAILS |" >> $GITHUB_STEP_SUMMARY
 
-          # 4. Logical Gates (Failing the build)
+          # 5. Fail/Pass Logic
           if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]; then
-            echo "::error::Data Loss Detected! Expected $EXPECTED_ROWS, got $ACTUAL_ROWS."
+            echo "::error::Data Loss! Expected $EXPECTED_ROWS rows, but only found $ACTUAL_ROWS."
             exit 1
           fi
 
           if [ "$API_FAILS" -gt 0 ]; then
-            echo "::error::API Retrieval Verification failed ($API_FAILS errors)."
+            echo "::error::API Verification failed! $API_FAILS checks failed in teardown."
             exit 1
           fi
 
-          echo "All validations passed successfully!"
+          echo " All tests and data validations passed!"
