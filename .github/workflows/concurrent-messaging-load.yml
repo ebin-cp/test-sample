@@ -47,9 +47,22 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
+        id: k6_run
+        continue-on-error: true # Allow logs to print even if thresholds fail
         run: k6 run tests/load-test.js
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
+
+      - name: Print k6 Debug Logs
+        run: |
+          echo "Checking k6 summary results..."
+          cat summary.json | jq '.metrics.checks'
+          
+      - name: Fail if k6 failed
+        if: steps.k6_run.outcome == 'failure'
+        run: |
+          echo "::error::K6 Thresholds failed. Check the logs above for 403/502 errors."
+          exit 1
 
       - name: Get DB Count and Verify API
         env:
