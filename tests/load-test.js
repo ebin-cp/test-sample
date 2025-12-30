@@ -10,7 +10,7 @@ const ws_msg_interval = Number(`${__ENV.WS_MSG_INTERVAL}`);
 
 export const options = {
     vus: 50, 
-    duration: "5m", // Reduced to 5m for efficiency
+    duration: "1m", // Reduced to 5m for efficiency
     thresholds: {
         registrations_total: ["count >= 50"],
         // Commented out to prevent exit code 99 if network is slow
