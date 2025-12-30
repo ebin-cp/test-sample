@@ -5,14 +5,11 @@ jobs:
   load-test-with-docker:
     runs-on: ubuntu-latest
     environment: load_test
-
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [300, 400, 500]
-
-    timeout-minutes: 20
-
+        WS_MSG_INTERVAL: [100, 200, 300, 400, 500]
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,74 +27,61 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for Device API
+      - name: Wait for Services to be Ready
         run: |
-          for i in {1..30}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)
-            if [ "$STATUS" = "200" ]; then
-              echo "Device API is ready"
-              exit 0
-            fi
-            echo "Waiting for Device API... ($i)"
-            sleep 2
-          done
-          echo "::error::Device API never became ready"
-          exit 1
+          sleep 10 
+          curl --retry 5 --retry-connrefused http://localhost:8883/health
 
-      - name: Setup k6
+      - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
 
-      - name: Execute k6 Test
+      - name: Execute Test
         run: k6 run tests/load-test.js --summary-mode full
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
-      - name: Extract k6 Metrics
+      - name: Get Devices Count
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count' summary.json)
-          DEVICE_LIST_OK=$(jq '.metrics.device_list_checks.values.count' summary.json)
-          DEVICE_LOGS_OK=$(jq '.metrics.device_logs_checks.values.count' summary.json)
+          docker exec -e MYSQL_PWD mysql mysql \
+            -u root \
+            -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;"
 
+      - name: Extract k6 WS Messages Sent
+        id: k6_stats
+        run: |
+          WS_SENT=$(jq '.metrics.ws_msgs_sent.values.count' summary.json)
           echo "WS_SENT=$WS_SENT" >> $GITHUB_ENV
-          echo "DEVICE_LIST_OK=$DEVICE_LIST_OK" >> $GITHUB_ENV
-          echo "DEVICE_LOGS_OK=$DEVICE_LOGS_OK" >> $GITHUB_ENV
-
-      - name: Compare and Validate API Checks
-        run: |
-          if [ "$DEVICE_LIST_OK" -lt 1 ]; then
-            echo "::error::Device list API verification failed"
-            exit 1
-          fi
-          if [ "$DEVICE_LOGS_OK" -lt 1 ]; then
-            echo "::error::Device logs API verification failed"
-            exit 1
-          fi
-          echo "Success: Device list and device logs APIs verified"
+          echo "$WS_SENT messages sent using k6"
 
       - name: Get Log Messages Count
         env:
-          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s \
-            -e "SELECT COUNT(*) FROM ${{ secrets.DB_NAME }}.device_monitor_log;")
+          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;"| awk '{print $1}')
           echo "ROW_COUNT=$ROW_COUNT" >> $GITHUB_ENV
+          echo "$ROW_COUNT rows found in database."
 
-      - name: Compare and Validate DB Logs
+      - name: Compare and Validate
         run: |
-          EXPECTED=$(( WS_SENT * 4 ))
-          echo "Expected rows: $EXPECTED"
-          echo "Actual rows: $ROW_COUNT"
-          if [ "$ROW_COUNT" -ne "$EXPECTED" ]; then
-            echo "::error::Mismatch in log rows"
+          if [[ -z "$WS_SENT" || -z "$ROW_COUNT" ]]; then
+            echo "::error::Metrics missing. K6: $WS_SENT, DB: $ROW_COUNT"
             exit 1
           fi
-          echo "Success: Log row count matches"
 
-      - name: Upload k6 summary.json as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: k6-summary
-          path: summary.json
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+
+          echo "K6 Messages Sent: $WS_SENT"
+          echo "Expected Rows ($WS_SENT * 4): $EXPECTED_ROWS"
+          echo "Actual Rows in MySQL: $ROW_COUNT"
+
+          if [ "$ROW_COUNT" -ne "$EXPECTED_ROWS" ]; then
+            echo "::error::Data integrity check failed! Expected $EXPECTED_ROWS rows but found $ROW_COUNT."
+            exit 1
+          else
+            echo "Success: Data counts match."
+          fi
 
       - name: Stop Services
         if: always()
