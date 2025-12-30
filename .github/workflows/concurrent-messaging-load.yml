@@ -1,5 +1,10 @@
-name: 50-Device Concurrent WebSocket Messaging stress test
-on: [push]
+name: 50-Device Concurrent WebSocket Messaging Stress Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
   load-test-with-docker:
@@ -8,14 +13,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [300]
-    timeout-minutes: 10
+        # Runs the test three times with different message frequencies
+        WS_MSG_INTERVAL: [100, 300, 500]
+    
+    timeout-minutes: 15
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create .env file
+      - name: Create .env and Start Services
         run: |
+          # Ensure DATABASE_HOST is set to 'mysql' to work within the Docker network
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_USER=${{ secrets.DB_USER }}" >> .env
           echo "DATABASE_USER_PASSWORD=${{ secrets.DB_USER_PASSWD }}" >> .env
@@ -23,62 +32,96 @@ jobs:
           echo "DATABASE_HOST=mysql" >> .env
           echo "DATABASE_PORT=3306" >> .env
           mv .env docker/v1/
+          docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Start Services
-        run: docker compose -f ./docker/v1/docker-compose.yml up -d
-
-      - name: Wait for Services (Handle 403/200)
+      - name: Wait for Backend (Handling 502/403 Gateways)
         run: |
-          echo "Waiting for API (Nginx) to respond..."
-          for i in {1..15}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health || echo "DNS_ERR")
+          echo "Waiting for http://localhost:8883/health..."
+          # Retries for 2 minutes to allow MySQL migrations and Node.js boot-up
+          for i in {1..24}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health || echo "000")
             if [ "$STATUS" == "200" ] || [ "$STATUS" == "403" ]; then
-              echo "Backend is reachable (Status: $STATUS)"
+              echo "Backend responded with $STATUS - Ready!"
               exit 0
             fi
             echo "Attempt $i: Status $STATUS. Waiting 5s..."
             sleep 5
           done
-          echo "::error::Backend failed to respond."
+          echo "::error::Backend failed to start in time. Dumping logs..."
           docker logs nodejs_app
           exit 1
 
       - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
 
-      - name: Execute Test
+      - name: Execute k6 Load Test
         id: k6_run
-        continue-on-error: true # Allow logs to print even if thresholds fail
         run: k6 run tests/load-test.js
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
-      - name: Print k6 Debug Logs
+      - name: Capture Container Logs
+        if: always()
         run: |
-          echo "Checking k6 summary results..."
-          cat summary.json | jq '.metrics.checks'
-          
-      - name: Fail if k6 failed
-        if: steps.k6_run.outcome == 'failure'
-        run: |
-          echo "::error::K6 Thresholds failed. Check the logs above for 403/502 errors."
-          exit 1
+          docker logs nodejs_app > app_logs_${{ matrix.WS_MSG_INTERVAL }}.txt 2>&1
+          docker logs mysql > mysql_logs_${{ matrix.WS_MSG_INTERVAL }}.txt 2>&1
+          docker logs nginx_proxy > nginx_logs_${{ matrix.WS_MSG_INTERVAL }}.txt 2>&1
 
-      - name: Get DB Count and Verify API
+      - name: Upload Results and Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-report-interval-${{ matrix.WS_MSG_INTERVAL }}
+          path: |
+            summary.json
+            app_logs_*.txt
+            mysql_logs_*.txt
+            nginx_logs_*.txt
+          retention-days: 7
+
+      - name: Compare and Validate (DB vs k6 vs API)
+        if: success()
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          # Verify Database Records
-          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;"| awk '{print $1}')
-          echo "Rows in DB: $ROW_COUNT"
+          # 1. Extract Metrics from k6 Summary
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count' summary.json)
+          API_FAILS=$(jq '.metrics.checks.values.fails' summary.json)
           
-          # Check k6 summary for API check failures
-          FAILED_CHECKS=$(jq '.metrics.checks.values.fails' summary.json)
-          if [ "$FAILED_CHECKS" -gt "0" ]; then
-            echo "::error::API verification failed ($FAILED_CHECKS fails)"
+          # 2. Extract Data from MySQL
+          # Note: We expect 4 log entries (cellular, volume, firmware, battery) per WS message
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;")
+
+          echo "=========================================="
+          echo "   VALIDATION REPORT (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)"
+          echo "=========================================="
+          echo "Devices in DB:      $DEVICE_COUNT (Target: 50)"
+          echo "k6 WS Sent:         $WS_SENT"
+          echo "Expected Log Rows:  $EXPECTED_ROWS"
+          echo "Actual Log Rows:    $ACTUAL_ROWS"
+          echo "API Check Failures: $API_FAILS"
+          echo "=========================================="
+
+          # VALIDATION LOGIC
+          if [ "$DEVICE_COUNT" -lt 50 ]; then
+            echo "::error::Device registration failed. Found only $DEVICE_COUNT devices."
             exit 1
           fi
 
-      - name: Stop Services
+          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]; then
+            echo "::error::Data integrity failure. Expected $EXPECTED_ROWS rows, but found $ACTUAL_ROWS."
+            exit 1
+          fi
+
+          if [ "$API_FAILS" -gt 0 ]; then
+            echo "::error::API Retrieval checks failed. Verify /device and /measurements endpoints."
+            exit 1
+          fi
+          
+          echo "Success: All checks passed for interval ${{ matrix.WS_MSG_INTERVAL }}ms!"
+
+      - name: Stop and Cleanup
         if: always()
         run: docker compose -f ./docker/v1/docker-compose.yml down -v

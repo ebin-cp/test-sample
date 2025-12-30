@@ -11,35 +11,26 @@ export const options = {
     vus: 50,
     duration: "1m",
     thresholds: {
-        // We temporarily lower this to 0% just to see the logs without the test crashing
-        "checks": ["rate>=0"], 
+        "checks": ["rate>0.9"], 
     },
 };
 
+// Global variable to capture test start time for the query range
+const testStartTimeNS = Date.now() * 1000000;
+
 export function setup() {
     const deviceKeys = [];
-    const params = { 
-        headers: { 
-            "Content-Type": "application/json",
-            "Origin": "robad.in",
-            "User-Agent": "k6-test"
-        } 
-    };
-
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
-        const res = http.post("http://localhost:8883/api/v1/device", JSON.stringify({ imei }), params);
-
-        if (res.status !== 200) {
-            console.log(`SETUP ERROR: Device ${i} failed. Status: ${res.status}. Body: ${res.body}`);
-            continue; 
+        const res = http.post("http://localhost:8883/api/v1/device", 
+            JSON.stringify({ imei }), 
+            { headers: { "Content-Type": "application/json" } }
+        );
+        if (res.status === 200) {
+            const d = res.json();
+            deviceKeys.push({ api_key: d.key.key, imei: imei });
         }
-
-        const d = res.json();
-        deviceKeys.push({ api_key: d.key.key, imei: imei });
     }
-
-    if (deviceKeys.length === 0) fail("Critical Failure: 0 devices registered.");
     return { keys: deviceKeys };
 }
 
@@ -55,35 +46,53 @@ export default function(data) {
     }, (socket) => {
         socket.on("open", () => {
             socket.setInterval(() => {
-                const time_str = Date.now() * 1000000;
-                socket.send(`cellular,imei=${myKey.imei} rssi=16.56 ${time_str}`);
+                const ts = Date.now() * 1000000;
+                const payload = [
+                    `cellular,imei=${myKey.imei} rssi=16 ${ts}`,
+                    `volume,imei=${myKey.imei} vol=100 ${ts}`,
+                    `firmware,imei=${myKey.imei} ver=1.0 ${ts}`,
+                    `battery,imei=${myKey.imei} v=12 ${ts}`
+                ].join("\n");
+                
+                socket.send(payload);
                 ws_metrics_sent_msgs.add(1);
             }, ws_msg_interval);
         });
-        socket.on("error", (e) => console.log(`WS Connection Error: ${e.error()}`));
     });
-
-    check(res, { "WS connected": (r) => r && r.status === 101 });
+    check(res, { "WS Connected": (r) => r && r.status === 101 });
 }
 
 export function teardown(data) {
     const testDevice = data.keys[0];
+    const testEndTimeNS = Date.now() * 1000000;
+    
     const params = { 
         headers: { 
-            "Authorization": `${testDevice.api_key}`, // Double check if your API expects Bearer!
-            "Origin": "robad.in"
+            "Authorization": `${testDevice.api_key}`,
+            "Content-Type": "application/json"
         } 
     };
 
-    const listRes = http.get("http://localhost:8883/api/v1/devices", params);
-    const logsRes = http.get(`http://localhost:8883/api/v1/logs?imei=${testDevice.imei}`, params);
+    // 1. Verify GET Device List
+    const listRes = http.get("http://localhost:8883/api/v1/device", params);
+    check(listRes, {
+        "API: Device List status 200": (r) => r.status === 200,
+        "API: Device List has data": (r) => r.json() && r.json().length > 0,
+    });
 
-    check(listRes, { "Teardown: List API 200": (r) => r.status === 200 });
-    check(logsRes, { "Teardown: Logs API 200": (r) => r.status === 200 });
+    // 2. Verify GET Measurements (Volume)
+    // We query from the start of the test until now
+    const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=volume&start_ns=${testStartTimeNS}&end_ns=${testEndTimeNS}`;
+    const measRes = http.get(measUrl, params);
+    
+    check(measRes, {
+        "API: Measurements status 200": (r) => r.status === 200,
+        "API: Measurements returns array": (r) => Array.isArray(r.json()),
+        "API: Measurements has data": (r) => r.json().length > 0,
+    });
 
-    if (listRes.status !== 200 || logsRes.status !== 200) {
-        console.log(`TEARDOWN DEBUG: List Status ${listRes.status}, Logs Status ${logsRes.status}`);
-        console.log(`TEARDOWN BODY: ${listRes.body}`);
+    if (measRes.status !== 200) {
+        console.log(`TEARDOWN FAIL: Status ${measRes.status} for URL: ${measUrl}`);
     }
 }
 
