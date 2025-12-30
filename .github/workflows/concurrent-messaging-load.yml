@@ -11,8 +11,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [300] # Single interval to save time; add more if needed
-    timeout-minutes: 15
+        WS_MSG_INTERVAL: [300, 400, 500] # Single interval to save time; add more if needed
+    timeout-minutes: 7
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
