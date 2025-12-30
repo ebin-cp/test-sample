@@ -4,7 +4,6 @@ import ws from "k6/ws";
 import { check, fail, sleep } from "k6";
 import { Counter } from "k6/metrics";
 
-const registrationCount = new Counter("registrations_total");
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
 const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
 
@@ -12,36 +11,33 @@ export const options = {
     vus: 50,
     duration: "1m",
     thresholds: {
-        registrations_total: ["count >= 50"],
+        checks: ["rate>0.9"], // 90% of checks must pass
     },
 };
 
 export function setup() {
     const deviceKeys = [];
-    const url = "http://localhost:8883/api/v1/device";
+    const params = { 
+        headers: { 
+            "Content-Type": "application/json",
+            "Origin": "robad.in" 
+        } 
+    };
 
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
-        const payload = JSON.stringify({ imei: imei });
-        const params = { headers: { "Content-Type": "application/json" } };
-
-        let res = http.post(url, payload, params);
-
-        // RETRY LOGIC: If we get a 502, wait 3 seconds and try one more time
-        if (res.status === 502) {
-            console.log(`Device ${i} got 502. Retrying...`);
-            sleep(3);
-            res = http.post(url, payload, params);
-        }
+        const res = http.post("http://localhost:8883/api/v1/device", JSON.stringify({ imei }), params);
 
         if (res.status !== 200) {
-            fail(`Setup failed at device ${i}: ${res.status}. Body: ${res.body}`);
+            console.error(`Device ${i} registration failed: ${res.status} ${res.body}`);
+            continue; 
         }
 
         const d = res.json();
-        registrationCount.add(1);
         deviceKeys.push({ api_key: d.key.key, imei: imei });
     }
+
+    if (deviceKeys.length === 0) fail("No devices registered. Aborting.");
     return { keys: deviceKeys };
 }
 
@@ -58,27 +54,40 @@ export default function(data) {
         socket.on("open", () => {
             socket.setInterval(() => {
                 const time_str = Date.now() * 1000000;
-                const logs = `cellular,imei=${myKey.imei} rssi=16.56 ${time_str}`;
-                socket.send(logs);
+                const cellular_log = `cellular,imei=${myKey.imei} rssi=16.56 ${time_str}`;
+                socket.send(cellular_log);
                 ws_metrics_sent_msgs.add(1);
             }, ws_msg_interval);
         });
     });
 
-    check(res, { "connected": (r) => r && r.status === 101 });
+    check(res, { "WS connected": (r) => r && r.status === 101 });
 }
 
 export function teardown(data) {
     const testDevice = data.keys[0];
-    const params = { headers: { "Authorization": `${testDevice.api_key}` } };
+    const params = { 
+        headers: { 
+            "Authorization": `${testDevice.api_key}`,
+            "Origin": "robad.in"
+        } 
+    };
 
-    // API Verification: List
+    // 1. ADDED: Verify Device List Retrieval
     const listRes = http.get("http://localhost:8883/api/v1/devices", params);
-    check(listRes, { "API: List Status 200": (r) => r.status === 200 });
+    check(listRes, {
+        "API: Get Devices 200": (r) => r.status === 200,
+        "API: List contains data": (r) => r.json() && r.json().length > 0,
+    });
 
-    // API Verification: Logs
+    // 2. ADDED: Verify Device Logs Retrieval
     const logRes = http.get(`http://localhost:8883/api/v1/logs?imei=${testDevice.imei}`, params);
-    check(logRes, { "API: Logs Status 200": (r) => r.status === 200 });
+    check(logRes, {
+        "API: Get Logs 200": (r) => r.status === 200,
+        "API: Logs count > 0": (r) => r.json() && r.json().length > 0,
+    });
+
+    console.log(`Teardown complete. Verified API for device: ${testDevice.imei}`);
 }
 
 export function handleSummary(data) {

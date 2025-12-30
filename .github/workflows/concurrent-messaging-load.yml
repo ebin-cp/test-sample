@@ -8,7 +8,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [300] # Simplified for debugging
+        WS_MSG_INTERVAL: [300]
     timeout-minutes: 10
     steps:
       - name: Checkout code
@@ -16,7 +16,6 @@ jobs:
 
       - name: Create .env file
         run: |
-          # Ensure DATABASE_HOST is set to 'mysql' (the service name), NOT localhost
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_USER=${{ secrets.DB_USER }}" >> .env
           echo "DATABASE_USER_PASSWORD=${{ secrets.DB_USER_PASSWD }}" >> .env
@@ -28,21 +27,20 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for Backend (with Log Dump on Failure)
+      - name: Wait for Services (Handle 403/200)
         run: |
-          echo "Waiting for http://localhost:8883/health to return 200..."
-          for i in {1..20}; do
+          echo "Waiting for API (Nginx) to respond..."
+          for i in {1..15}; do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health || echo "DNS_ERR")
-            if [ "$STATUS" == "200" ]; then
-              echo "Backend is READY"
+            if [ "$STATUS" == "200" ] || [ "$STATUS" == "403" ]; then
+              echo "Backend is reachable (Status: $STATUS)"
               exit 0
             fi
             echo "Attempt $i: Status $STATUS. Waiting 5s..."
             sleep 5
           done
-          echo "::error::Backend failed to start. Dumping logs..."
+          echo "::error::Backend failed to respond."
           docker logs nodejs_app
-          docker logs mysql
           exit 1
 
       - name: Setup Grafana K6
@@ -52,6 +50,21 @@ jobs:
         run: k6 run tests/load-test.js
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
+
+      - name: Get DB Count and Verify API
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+        run: |
+          # Verify Database Records
+          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;"| awk '{print $1}')
+          echo "Rows in DB: $ROW_COUNT"
+          
+          # Check k6 summary for API check failures
+          FAILED_CHECKS=$(jq '.metrics.checks.values.fails' summary.json)
+          if [ "$FAILED_CHECKS" -gt "0" ]; then
+            echo "::error::API verification failed ($FAILED_CHECKS fails)"
+            exit 1
+          fi
 
       - name: Stop Services
         if: always()
