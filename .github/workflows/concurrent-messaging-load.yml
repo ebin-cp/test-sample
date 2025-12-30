@@ -27,12 +27,10 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for Services (Handle 502 Prevention)
+      - name: Wait for Services to be Ready
         run: |
-          echo "Waiting for API to respond 200 OK..."
-          # Increased to 120s and added a curl verbose for the first attempt to see headers
-          curl -v http://localhost:8883/health || true
-          timeout 120s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ]; do echo "Waiting..."; sleep 5; done'
+          sleep 20 
+          curl --retry 5 --retry-connrefused http://localhost:8883/health
 
       - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
