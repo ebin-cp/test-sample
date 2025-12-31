@@ -1,88 +1,128 @@
 import http from "k6/http";
 import * as ulid from "https://esm.run/ulid";
 import ws from "k6/ws";
-import { sleep } from "k6";
-import { Gauge, Counter } from "k6/metrics";
+import { check, fail } from "k6";
+import { Counter } from "k6/metrics";
 
-const gauge_devices_found = new Gauge('devices_found_count');
-const gauge_conn_success = new Gauge('connections_success_count');
-const gauge_total_saved = new Gauge('total_saved_count');
-const count_sent_msgs = new Counter('total_sent_msgs');
+const registrationCount = new Counter("registrations_total");
+const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
+const ws_msg_interval = Number(`${__ENV.WS_MSG_INTERVAL}`);
 
 export const options = {
-    vus: 50,
-    duration: "1m"
+    vus: 50, // 50 simultaneous clients
+    duration: "2m", // run the test for 10 minute
+    registrations_total: ["count >= 50"],
+    ws_metrics_sent_msgs: ["count >= 10000"],
 };
 
+// 1. SETUP: Runs once before the test starts
 export function setup() {
-    const startTimeNS = Date.now() * 1000000;
     const deviceKeys = [];
+
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
-        const res = http.post("http://localhost:8883/api/v1/device", 
-            JSON.stringify({ imei }), 
-            { headers: { "Content-Type": "application/json" } }
+        const payload = JSON.stringify({ imei: imei });
+        const params = { headers: { "Content-Type": "application/json" } };
+
+        const res = http.post(
+            "http://localhost:8883/api/v1/device",
+            payload,
+            params,
         );
-        if (res.status === 200) {
-            deviceKeys.push({ api_key: res.json().key.key, imei: imei });
+        if (res.status !== 200) {
+            fail(`Aborting test: Unexpected JSON structure. Received: ${res.body}`);
         }
+        if (!res.body || res.body.length === 0) {
+            fail("STOP: Server returned 200 but the body was empty!");
+        }
+        let d;
+        try {
+            d = res.json();
+        } catch (e) {
+            fail(`Aborting: Response was not valid JSON. Body: ${res.body}`);
+        }
+        if (d.result !== "success" && !d.key) {
+            fail(`Aborting test: Unexpected JSON structure. Received: ${res.body}`);
+        }
+        registrationCount.add(1);
+        deviceKeys.push({ api_key: d.key.key, imei: imei });
     }
-    return { keys: deviceKeys, startNS: startTimeNS };
+    // Return the keys so they are available in the default function
+    return { keys: deviceKeys };
 }
 
+// 2. VU EXECUTION: Runs for each of the 50 clients
 export default function(data) {
+    // Each VU picks its unique key based on its ID (1 to 50)
     const myKey = data.keys[__VU - 1];
-    if (!myKey) return;
+    const url = "ws://localhost:8883/api/live";
 
-    ws.connect("ws://localhost:8883/api/live", {
-        headers: { Authorization: `${myKey.imei} ${myKey.api_key}` },
-    }, (socket) => {
-        socket.on("open", () => {
-            socket.setInterval(() => {
-                const ts = Date.now() * 1000000;
-                const payload = [
-                    `cellular,imei=${myKey.imei} rssi=16 ${ts}`,
-                    `volume,imei=${myKey.imei} vol=100 ${ts}`,
-                    `firmware,imei=${myKey.imei} ver=1.0 ${ts}`,
-                    `battery,imei=${myKey.imei} v=12 ${ts}`
-                ].join("\n");
-                socket.send(payload);
-                count_sent_msgs.add(1);
-            }, Number(__ENV.WS_MSG_INTERVAL) || 10000);
-        });
-        socket.setTimeout(() => socket.close(), 60000);
-    });
+    const res = ws.connect(
+        url,
+        {
+            headers: {
+                Origin: "robad.in",
+                Authorization: `${myKey.imei} ${myKey.api_key}`,
+            },
+        },
+        (socket) => {
+            socket.on("open", () => {
+                // Send message every 300ms
+                socket.setInterval(() => {
+                    const time_str = Date.now() * 1000000;
+                    const cellular_log = `cellular,imei=${myKey.imei} rssi=16.56,iccid=\"89919509129637837632\",operator=\"airtel\",band=\"LTE BAND 40\",rat=\"TDD LTE\",plmn=\"40495\",apn=\"iot.com\" ${time_str}`;
+                    const volume_log = `volume,imei=${myKey.imei} nodeAddress=\"0x01,0x02,0x03\",mask=\"0x20\",sensorValue=6,volume=100.0 ${time_str}`;
+                    const fw_log = `firmware,imei=${myKey.imei} firmware_ver_tx=\"v1.0.0:slm-t\",node_0x01_fw=\"v1.0.0:slm-s\",node_0x02_fw=\"v1.0.0:slm-s\" ${time_str}`;
+                    const bat_log = `battery,imei=${myKey.imei} eBatVolt=12.00 ${time_str}`;
+                    socket.send([cellular_log, volume_log, fw_log, bat_log].join("\n"));
+                    ws_metrics_sent_msgs.add(1);
+                }, ws_msg_interval);
+            });
+
+            socket.on("error", (e) => console.error("WS Error:", e.error()));
+        },
+    );
+
+    check(res, { "connected successfully": (r) => r && r.status === 101 });
 }
 
 export function teardown(data) {
-    console.log("--- Starting Final API Audit ---");
-    sleep(10); 
-
-    let totalDbRowsFromAPI = 0;
-    let successfulConns = 0;
-
-    data.keys.forEach((device) => {
-        // Broad window (start_ns=0) to confirm if data landed at all
-        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=0&end_ns=${Date.now() * 1000000 + 5000000000}`;
-
-        const res = http.get(url, {
-            headers: { Authorization: `${device.api_key}` }
-        });
-
-        if (res.status === 200) {
-            const rows = res.json();
-            const rowCount = Array.isArray(rows) ? rows.length : 0;
-            console.log(`API CHECK [${device.imei}]: Found ${rowCount} rows`);
-            successfulConns++;
-            totalDbRowsFromAPI += rowCount;
-        }
+    console.log("--- Starting Final Test ---");
+    sleep(60);
+    // --- 1. Device Retrieval Audit ---
+    const listRes = http.get("http://localhost:8883/api/v1/device", {
+        headers: { "Authorization": `${data.keys[0].api_key}` },
+        timeout:'60s'
     });
 
-    gauge_devices_found.add(data.keys.length);
-    gauge_conn_success.add(successfulConns);
-    gauge_total_saved.add(totalDbRowsFromAPI);
+    const is200 = listRes.status === 200;
+    const listData = is200 ? listRes.json() : [];
+    const isNotEmpty = listData.length > 0;
+    const retrievedCount = listData.length;
+
+    // --- 2. Measurement Endpoint Audit ---
+    let successfulConns = 0;
+   data.keys.forEach((device) => {
+        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`;
+
+        const res = http.get(url, {
+            headers: { Authorization: `${device.api_key}` },
+            timeout: '60s'
+        });
+        if (res.status === 200) {
+            const rowCount = res.json().length;
+            console.log(`DEVICE AUDIT [${device.imei}]: Total Rows Found = ${rowCount}`);
+            successfulConns++;
+            totalDbRows += (rowCount * 4); 
+        } else {
+            console.log(`DEVICE AUDIT [${device.imei}]: FAILED - Status ${res.status}`);
+        }
+        sleep(0.5); 
+    });
 }
 
 export function handleSummary(data) {
-    return { "summary.json": JSON.stringify(data) };
+    return {
+        "summary.json": JSON.stringify(data), // This creates the file in the workspace
+    };
 }
