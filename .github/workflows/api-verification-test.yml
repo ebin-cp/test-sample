@@ -57,19 +57,26 @@ jobs:
       - name: Final Validation
         if: always()
         run: |
-          # Pull the actual values from the Gauges
-          ACTUAL_DEVICES=$(jq '.metrics.devices_found_count.values.value // 0' summary.json)
-          SUCCESS_ENDPOINTS=$(jq '.metrics.endpoints_success_count.values.value // 0' summary.json)
-          DEVICES_WITH_DATA=$(jq '.metrics.devices_with_data_count.values.value // 0' summary.json)
+          # Use 'jq' to extract the value, defaulting to 0 if not found
+          ACTUAL_DEVICES=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
+          SUCCESS_ENDPOINTS=$(jq -r '.metrics.endpoints_success_count.values.value // 0' summary.json)
+          DEVICES_WITH_DATA=$(jq -r '.metrics.devices_with_data_count.values.value // 0' summary.json)
           
           echo "### 📊 Deep Trace Validation (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Result | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Device Retrieval** | Found $ACTUAL_DEVICES of 50 | $([[ $ACTUAL_DEVICES -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Endpoint Health** | $SUCCESS_ENDPOINTS of 50 OK | $([[ $SUCCESS_ENDPOINTS -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Data Integrity** | $DEVICES_WITH_DATA of 50 have Data | $([[ $DEVICES_WITH_DATA -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          
+          # Helper logic for status icons
+          [[ "$ACTUAL_DEVICES" -eq 50 ]] && DEVICE_STAT="✅" || DEVICE_STAT="❌"
+          [[ "$SUCCESS_ENDPOINTS" -eq 50 ]] && ENDPOINT_STAT="✅" || ENDPOINT_STAT="❌"
+          [[ "$DEVICES_WITH_DATA" -eq 50 ]] && DATA_STAT="✅" || DATA_STAT="❌"
 
-          if [[ "$ACTUAL_DEVICES" -lt 50 || "$SUCCESS_ENDPOINTS" -lt 50 || "$DEVICES_WITH_DATA" -lt 50 ]]; then
-            echo "::error::Validation Failed! Only $DEVICES_WITH_DATA/50 devices had data."
+          echo "| **Device Retrieval** | Found $ACTUAL_DEVICES of 50 | $DEVICE_STAT |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Endpoint Health** | $SUCCESS_ENDPOINTS of 50 OK | $ENDPOINT_STAT |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Data Integrity** | $DEVICES_WITH_DATA of 50 have Data | $DATA_STAT |" >> $GITHUB_STEP_SUMMARY
+          
+          # Final Exit Logic
+          if [ "$ACTUAL_DEVICES" -lt 50 ] || [ "$SUCCESS_ENDPOINTS" -lt 50 ] || [ "$DEVICES_WITH_DATA" -lt 50 ]; then
+            echo "::error::Validation Failed! Results: Devices=$ACTUAL_DEVICES, Endpoints=$SUCCESS_ENDPOINTS, Data=$DEVICES_WITH_DATA"
             exit 1
           fi
