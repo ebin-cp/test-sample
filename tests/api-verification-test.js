@@ -4,7 +4,7 @@ import ws from "k6/ws";
 import { check, sleep } from "k6";
 import { Gauge } from "k6/metrics";
 
-// Metric Definitions for YAML to read
+// Metric Definitions - Must match your YAML jq commands
 const gauge_devices_found = new Gauge('devices_found_count');
 const gauge_conn_success = new Gauge('connections_success_count');
 const gauge_integrity_pass = new Gauge('integrity_passed_count');
@@ -33,8 +33,10 @@ export function setup() {
 }
 
 export default function(data) {
+    if (!data.keys || data.keys.length === 0) return;
+
     const myDeviceIndex = __VU - 1;
-    const myKey = data.keys[myDeviceIndex];
+    const myKey = data.keys[myDeviceIndex % data.keys.length];
     const url = "ws://localhost:8883/api/live";
 
     const res = ws.connect(url, {
@@ -56,9 +58,17 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    sleep(10); // Wait for DB write buffers
+    if (!data || !data.keys || data.keys.length === 0) {
+        console.error("No data from setup. Skipping teardown.");
+        return;
+    }
+
+    // Wait for DB to settle
+    console.log("Reconciliation starting... waiting 10s");
+    sleep(10); 
 
     const interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
+    // Expected: (60s / (interval/1000)) * 4 metrics
     const expectedPerDevice = Math.floor(60 / (interval / 1000)) * 4;
 
     let devicesRetrieved = 0;
@@ -67,37 +77,42 @@ export function teardown(data) {
     let totalSavedCount = 0;
 
     // A. Device Retrieval Check
-    const listRes = http.get("http://localhost:8883/api/v1/device", {
-        headers: { "Authorization": `${data.keys[0].api_key}` }
-    });
-    if (listRes.status === 200) {
-        devicesRetrieved = listRes.json().length;
-    }
+    try {
+        const listRes = http.get("http://localhost:8883/api/v1/device", {
+            headers: { "Authorization": `${data.keys[0].api_key}` }
+        });
+        if (listRes.status === 200) {
+            devicesRetrieved = listRes.json().length;
+        }
+    } catch (e) { console.error("Device list API failed"); }
 
     // B. Per-Device Connection & Integrity Audit
     data.keys.forEach((device) => {
-        const res = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${device.imei}`, 
-            { headers: { Authorization: `${device.api_key}` } }
-        );
+        try {
+            const res = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${device.imei}`, 
+                { headers: { Authorization: `${device.api_key}` } }
+            );
 
-        if (res.status === 200) {
-            successfulConnections++;
-            const actualCount = res.json().length;
-            totalSavedCount += actualCount;
+            if (res.status === 200) {
+                successfulConnections++;
+                const actualCount = res.json().length;
+                totalSavedCount += actualCount;
 
-            // Strict one-to-one integrity check
-            if (actualCount === expectedPerDevice) {
-                integrityPassedCount++;
+                if (actualCount === expectedPerDevice) {
+                    integrityPassedCount++;
+                }
             }
-        }
+        } catch (e) { console.error(`Failed to audit device ${device.imei}`); }
     });
 
-    // C. Add values to Gauges for YAML extraction
+    // C. Write results to Gauges
     gauge_devices_found.add(devicesRetrieved);
     gauge_conn_success.add(successfulConnections);
     gauge_integrity_pass.add(integrityPassedCount);
     gauge_total_sent.add(expectedPerDevice * 50);
     gauge_total_saved.add(totalSavedCount);
+
+    console.log(`Teardown complete. Found ${totalSavedCount} records.`);
 }
 
 export function handleSummary(data) {
