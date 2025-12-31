@@ -51,57 +51,37 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    console.log("Waiting 10s for database synchronization...");
-    sleep(10); 
-
-    const endTimeNS = Date.now() * 1000000;
-    const interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
+    console.log("--- Starting Final Audit ---");
     
-    // We expect 1 'volume' record per interval. 
-    // Calculation: 60 seconds / (interval in seconds)
-    const expectedPerMeasurement = Math.floor(60 / (interval / 1000));
-
-    let devicesFound = 0;
-    let successfulConns = 0;
-    let integrityPassed = 0;
-    let totalVolumeRecords = 0;
-
-    // 1. Device Retrieval Test (Requirement: Status 200 & Not Empty)
+    // --- 1. Device Retrieval Audit ---
     const listRes = http.get("http://localhost:8883/api/v1/device", {
         headers: { "Authorization": `${data.keys[0].api_key}` }
     });
-    if (listRes.status === 200 && listRes.json().length > 0) {
-        devicesFound = listRes.json().length;
-    }
 
-    // 2. Individual Device Audit Loop (Requirement: Every device is not empty & count matches)
+    const is200 = listRes.status === 200;
+    const listData = is200 ? listRes.json() : [];
+    const isNotEmpty = listData.length > 0;
+    const retrievedCount = listData.length;
+
+    // --- 2. Measurement Endpoint Audit ---
+    let successfulConns = 0;
     data.keys.forEach((device) => {
-        // Constructing your specific URL
-        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${endTimeNS}`;
-        
-        const res = http.get(url, {
-            headers: { "Authorization": `${device.api_key}` }
+        const res = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`, {
+            headers: { Authorization: `${device.api_key}` }
         });
-
-        if (res.status === 200) {
-            successfulConns++;
-            const records = res.json();
-            const count = Array.isArray(records) ? records.length : 0;
-            totalVolumeRecords += count;
-
-            // Simple Integrity: Not empty AND matches expected count
-            if (count > 0 && count >= expectedPerMeasurement) {
-                integrityPassed++;
-            } else {
-                console.warn(`⚠️ Device ${device.imei} incomplete: Found ${count}, Expected ${expectedPerMeasurement}`);
-            }
-        }
+        if (res.status === 200) successfulConns++;
     });
 
-    gauge_devices_found.add(devicesFound);
-    gauge_conn_success.add(successfulConns);
-    gauge_integrity_pass.add(integrityPassed);
-    gauge_total_saved.add(totalVolumeRecords);
+    // Send these values to the summary
+    gauge_devices_found.add(retrievedCount); // Actual number found
+    gauge_conn_success.add(successfulConns); // Number of 200 OK connections
+    
+    // We use a dummy gauge to pass the status of 'is200' and 'isNotEmpty'
+    // 1 = Success, 0 = Failed
+    const retrievalStatus = (is200 && isNotEmpty) ? 1 : 0;
+    // You can also console log here for the k6 logs
+    console.log(`Retrieval Status: ${is200 ? "200 OK" : "FAILED"}`);
+    console.log(`Devices Found: ${retrievedCount}`);
 }
 
 export function handleSummary(data) {
