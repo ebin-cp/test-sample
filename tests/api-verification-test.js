@@ -12,11 +12,11 @@ export const options = {
     duration: "1m"
 };
 
-// Global variable to capture test start time for the query range
-const testStartTimeNS = Date.now() * 1000000;
-
 export function setup() {
+    // FIX 1: Capture start time here
+    const startTime = Date.now() * 1000000; 
     const deviceKeys = [];
+    
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
         const res = http.post("http://localhost:8883/api/v1/device", 
@@ -28,7 +28,8 @@ export function setup() {
             deviceKeys.push({ api_key: d.key.key, imei: imei });
         }
     }
-    return { keys: deviceKeys };
+    // FIX 2: You MUST return startNS so teardown can use it
+    return { keys: deviceKeys, startNS: startTime }; 
 }
 
 export default function(data) {
@@ -60,7 +61,11 @@ export default function(data) {
 }
 
 export function teardown(data) {
+    if (!data || !data.keys || data.keys.length === 0) return;
+
     const testDevice = data.keys[0];
+    // FIX 3: Correctly pull startNS from the data object
+    const testStartTimeNS = data.startNS; 
     const bufferNS = 5000 * 1000000; 
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
     const adjustedStartNS = testStartTimeNS - bufferNS;
@@ -75,35 +80,25 @@ export function teardown(data) {
     // 1. Check Device List
     const listRes = http.get("http://localhost:8883/api/v1/device", params);
 
-    if (listRes.status === 200) {
-        const devices = listRes.json();
-        console.log(`[API Output] Device List Check: Found ${devices.length} devices.`);
-    }
-
-
-    // 2. Check Measurements (Log Query)
+    // 2. Check Measurements
     const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=volume&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
     const measRes = http.get(measUrl, params);
     
-    if (measRes.status === 200) {
-        const logs = measRes.json();
-        // console.log(`[API Output] Log Retrieval Check: Found ${logs.length} volume records for IMEI ${testDevice.imei}.`);
-        if (logs.length > 0) {
-            // console.log(`[API Output] Sample Data Point: Value=${logs[0].value} at ${logs[0].timestamp_ns}`);
-        }
-    }
-
-
+    // Checks
     check(listRes, { "API: Device List 200": (r) => r.status === 200 });
     check(measRes, {
         "API: Measurements 200": (r) => r.status === 200,
-        "API: Measurements Has Data": (r) => r.json() && r.json().length > 0,
+        "API: Measurements Has Data": (r) => {
+            const body = r.json();
+            const hasData = Array.isArray(body) && body.length > 0;
+            if (!hasData) console.warn(`⚠️ FAIL: No records found for ${testDevice.imei} between ${adjustedStartNS} and ${testEndTimeNS}`);
+            return hasData;
+        },
     });
 }
 
 export function handleSummary(data) {
     return {
         "summary.json": JSON.stringify(data),
-        "stdout": JSON.stringify(data, null, 2),
     };
 }
