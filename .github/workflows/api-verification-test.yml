@@ -39,21 +39,12 @@ jobs:
         env:
           WS_MSG_INTERVAL: ${{matrix.WS_MSG_INTERVAL}}
 
-      - name: Capture Logs for Artifacts
-        if: always()
-        run: |
-          docker logs nodejs_app > app_logs.txt 2>&1
-          docker logs mysql > mysql_logs.txt 2>&1
-
-      - name: Upload Artifacts
+      - name: Upload Audit Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: api-validation-test-results-${{ matrix.WS_MSG_INTERVAL }}
-          path: |
-            summary.json
-            app_logs.txt
-            mysql_logs.txt
+          name: device-audit-report
+          path: audit_report.html
 
       - name: Test Report
         if: always()
