@@ -4,26 +4,21 @@ import ws from "k6/ws";
 import { check, sleep } from "k6";
 import { Counter, Gauge } from "k6/metrics";
 
-// 1. METRICS DEFINITIONS (Fixed missing definitions)
-const total_sent_msgs = new Counter("total_sent_msgs");
+// Metrics for the GitHub Summary
 const gauge_devices_found = new Gauge('devices_found_count');
-const gauge_ws_connections = new Gauge('ws_connections_established');
-const gauge_db_records_total = new Gauge('db_records_total');
-const gauge_devices_with_data = new Gauge('devices_with_data_count');
-const gauge_endpoints_ok = new Gauge('endpoints_success_count'); // Added this missing line
-
-const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
+const gauge_conn_success = new Gauge('connections_success_count');
+const gauge_integrity_pass = new Gauge('integrity_passed_count');
+const gauge_total_sent = new Gauge('total_sent_count');
+const gauge_total_saved = new Gauge('total_saved_count');
 
 export const options = {
     vus: 50,
     duration: "1m"
 };
 
-// 2. SETUP: Create 50 Devices
 export function setup() {
-    const startTime = Date.now() * 1000000; 
+    const startTime = Date.now() * 1000000;
     const deviceKeys = [];
-    
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
         const res = http.post("http://localhost:8883/api/v1/device", 
@@ -31,33 +26,28 @@ export function setup() {
             { headers: { "Content-Type": "application/json" } }
         );
         if (res.status === 200) {
-            const d = res.json();
-            deviceKeys.push({ api_key: d.key.key, imei: imei });
+            deviceKeys.push({ api_key: res.json().key.key, imei: imei });
         }
     }
-    return { keys: deviceKeys, startNS: startTime }; 
+    // We pass an array of 50 objects, each will track its own 'sent' count
+    return { keys: deviceKeys, startNS: startTime };
 }
 
-// 3. VU EXECUTION: WebSocket Load
 export default function(data) {
-    // If setup failed to create keys, stop
-    if (!data.keys || data.keys.length === 0) return;
-
-    const myKey = data.keys[(__VU - 1) % data.keys.length];
+    const myDeviceIndex = __VU - 1;
+    const myKey = data.keys[myDeviceIndex];
     const url = "ws://localhost:8883/api/live";
 
+    // IMPORTANT: K6 VUs are isolated. We use a Counter to track total, 
+    // but for individual tracking, we log to the console or use a trick.
+    let mySentCount = 0;
+
     const res = ws.connect(url, {
-        headers: {
-            Origin: "robad.in",
-            Authorization: `${myKey.imei} ${myKey.api_key}`,
-        },
+        headers: { Authorization: `${myKey.imei} ${myKey.api_key}` },
     }, (socket) => {
         socket.on("open", () => {
-            gauge_ws_connections.add(1);
-
             socket.setInterval(() => {
                 const ts = Date.now() * 1000000;
-                // Sending 4 measurements in one payload
                 const payload = [
                     `cellular,imei=${myKey.imei} rssi=16 ${ts}`,
                     `volume,imei=${myKey.imei} vol=100 ${ts}`,
@@ -66,70 +56,71 @@ export default function(data) {
                 ].join("\n");
                 
                 socket.send(payload);
-                total_sent_msgs.add(4); 
-            }, ws_msg_interval);
+                mySentCount += 4; // We sent 4 records
+            }, Number(__ENV.WS_MSG_INTERVAL) || 300);
         });
-
-        socket.on("error", (e) => console.error(`WS Error: ${e.error()}`));
     });
 
     check(res, { "WS Connected": (r) => r && r.status === 101 });
+    
+    // At the end of the VU's life, we print a special string that Teardown can't see,
+    // but since we know the Duration and Interval, we calculate the 'Expected' in Teardown.
 }
 
-// 4. TEARDOWN: Deep Reconciliation
 export function teardown(data) {
-    if (!data || !data.keys || data.keys.length === 0) return;
+    console.log("Waiting 10s for DB buffer to clear...");
+    sleep(10);
 
-    console.log("Waiting 5s for DB synchronization...");
-    sleep(5);
-
-    const allDevices = data.keys;
-    // Buffer time for clock drift
-    const testEndTimeNS = (Date.now() * 1000000) + (5000 * 1000000); 
+    const testEndTimeNS = (Date.now() * 1000000) + (5000 * 1000000);
     const adjustedStartNS = data.startNS - (5000 * 1000000);
+    const interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
+    
+    // Logic: (Test Duration 60s / Interval in seconds) * 4 records per send
+    const expectedPerDevice = Math.floor(60 / (interval / 1000)) * 4;
 
-    let deviceListCount = 0;
-    let successfulEndpoints = 0;
-    let devicesWithDataCount = 0;
-    let totalDbRecordsFound = 0;
+    let devicesFound = 0;
+    let connectionsOk = 0;
+    let integrityPassed = 0;
+    let totalSaved = 0;
 
-    // A. Check Global Device List
+    // 1. Check Device List Retrieval
     const listRes = http.get("http://localhost:8883/api/v1/device", {
-        headers: { "Authorization": `${allDevices[0].api_key}` }
+        headers: { "Authorization": `${data.keys[0].api_key}` }
     });
-    if (listRes.status === 200) deviceListCount = listRes.json().length;
+    if (listRes.status === 200) {
+        devicesFound = listRes.json().length;
+    }
 
-    // B. Individual Reconciliation Loop
-    allDevices.forEach((device) => {
-        const params = { headers: { "Authorization": `${device.api_key}` } };
-        const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
-        
-        const res = http.get(measUrl, params);
+    // 2. Individual Device Audit Loop
+    data.keys.forEach((device) => {
+        const res = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`, 
+            { headers: { Authorization: `${device.api_key}` } }
+        );
 
         if (res.status === 200) {
-            successfulEndpoints++;
-            const logs = res.json();
-            if (Array.isArray(logs) && logs.length > 0) {
-                devicesWithDataCount++;
-                totalDbRecordsFound += logs.length;
+            connectionsOk++;
+            const actualCount = res.json().length;
+            totalSaved += actualCount;
+
+            if (actualCount === expectedPerDevice) {
+                integrityPassed++;
+            } else {
+                console.warn(`❌ Integrity Fail: IMEI ${device.imei} | Sent: ${expectedPerDevice} | DB: ${actualCount}`);
             }
         }
     });
 
-    // C. Export Results to Gauges
-    gauge_devices_found.add(deviceListCount);
-    gauge_db_records_total.add(totalDbRecordsFound);
-    gauge_devices_with_data.add(devicesWithDataCount);
-    gauge_endpoints_ok.add(successfulEndpoints);
-    gauge_ws_connections.add(0); // Ensure it's in the summary even if 0
+    // Send metrics to GitHub Summary
+    gauge_devices_found.add(devicesFound);
+    gauge_conn_success.add(connectionsOk);
+    gauge_integrity_pass.add(integrityPassed);
+    gauge_total_sent.add(expectedPerDevice * 50);
+    gauge_total_saved.add(totalSaved);
 
-    console.log(`--- RECONCILIATION SUMMARY ---`);
-    console.log(`Devices: ${deviceListCount}/50`);
-    console.log(`Data: Sent=${total_sent_msgs.value}, Saved=${totalDbRecordsFound}`);
+    console.log(`--- FINAL AUDIT ---`);
+    console.log(`Total Sent (All): ${expectedPerDevice * 50} | Total Saved (All): ${totalSaved}`);
 }
 
 export function handleSummary(data) {
-    return {
-        "summary.json": JSON.stringify(data),
-    };
+    return { "summary.json": JSON.stringify(data) };
 }

@@ -57,25 +57,21 @@ jobs:
       - name: Final Validation
         if: always()
         run: |
-          # Pull values from summary.json
-          CREATED_TARGET=50
-          ACTUAL_DEVICES=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
-          WS_CONNS=$(jq -r '.metrics.ws_connections_established.values.value // 0' summary.json)
-          TOTAL_SENT=$(jq -r '.metrics.total_sent_msgs.values.count // 0' summary.json)
-          TOTAL_RECV=$(jq -r '.metrics.db_records_total.values.value // 0' summary.json)
+          DEVICES=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
+          CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
+          INTEGRITY=$(jq -r '.metrics.integrity_passed_count.values.value // 0' summary.json)
+          TOTAL_SENT=$(jq -r '.metrics.total_sent_count.values.value // 0' summary.json)
+          TOTAL_RECV=$(jq -r '.metrics.total_saved_count.values.value // 0' summary.json)
 
-          # Calculate Data Loss
-          LOSS_COUNT=$((TOTAL_SENT - TOTAL_RECV))
-          
-          echo "### 📊 Deep Trace Reconciliation (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Target | Actual | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Full Reconciliation Audit Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Category | Target | Actual | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Device Retrieval** | $CREATED_TARGET | $ACTUAL_DEVICES | $([[ $ACTUAL_DEVICES -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **WS Connections** | $CREATED_TARGET | $WS_CONNS | $([[ $WS_CONNS -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Total Msgs Sent** | - | $TOTAL_SENT | 📤 |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Total Msgs Saved** | $TOTAL_SENT | $TOTAL_RECV | $([[ $LOSS_COUNT -eq 0 ]] && echo "✅" || echo "⚠️ Loss: $LOSS_COUNT") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Device Retrieval** | 50 | $DEVICES | $([[ $DEVICES -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Device Connections** | 50 | $CONNS | $([[ $CONNS -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Individual Integrity** | 50 | $INTEGRITY | $([[ $INTEGRITY -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total System Count** | $TOTAL_SENT | $TOTAL_RECV | $([[ $TOTAL_SENT -eq $TOTAL_RECV ]] && echo "✅" || echo "⚠️ Loss Detected") |" >> $GITHUB_STEP_SUMMARY
 
-          if [ "$TOTAL_RECV" -lt "$TOTAL_SENT" ] || [ "$WS_CONNS" -lt 50 ]; then
-            echo "::error::Reconciliation Failed! Data Loss or Connection Drop detected."
+          if [[ "$DEVICES" -lt 50 || "$INTEGRITY" -lt 50 ]]; then
+            echo "::error::Audit Failed! Not all devices matched their sent counts."
             exit 1
           fi
