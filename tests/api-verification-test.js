@@ -52,7 +52,7 @@ export default function(data) {
 
 export function teardown(data) {
     console.log("--- Starting Final Test ---");
-    
+    sleep(60);
     // --- 1. Device Retrieval Audit ---
     const listRes = http.get("http://localhost:8883/api/v1/device", {
         headers: { "Authorization": `${data.keys[0].api_key}` },
@@ -66,23 +66,22 @@ export function teardown(data) {
 
     // --- 2. Measurement Endpoint Audit ---
     let successfulConns = 0;
-    data.keys.forEach((device) => {
-        // Individual connection check
-       const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`;
+   data.keys.forEach((device) => {
+        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`;
 
-    const res = http.get(url, {
-    headers: { Authorization: `${device.api_key}` },
-    timeout: '60s'
-});
-
+        const res = http.get(url, {
+            headers: { Authorization: `${device.api_key}` },
+            timeout: '60s'
+        });
         if (res.status === 200) {
             const rowCount = res.json().length;
-            // This is the "Individual Data Count List" for the console
             console.log(`DEVICE AUDIT [${device.imei}]: Total Rows Found = ${rowCount}`);
             successfulConns++;
+            totalDbRows += (rowCount * 4); 
         } else {
             console.log(`DEVICE AUDIT [${device.imei}]: FAILED - Status ${res.status}`);
         }
+        sleep(0.5); 
     });
 
     // Send these values to the summary
