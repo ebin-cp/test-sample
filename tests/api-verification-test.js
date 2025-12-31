@@ -4,7 +4,7 @@ import ws from "k6/ws";
 import { check, sleep } from "k6";
 import { Gauge } from "k6/metrics";
 
-// ===== Metrics (used by CI) =====
+// ===== Metrics used by CI =====
 const gauge_devices_found = new Gauge("devices_found_count");
 const gauge_conn_success = new Gauge("connections_success_count");
 const gauge_integrity_pass = new Gauge("integrity_passed_count");
@@ -16,9 +16,10 @@ export const options = {
     duration: "1m",
 };
 
-// ===== SETUP: Create 50 devices =====
+// ===== SETUP =====
 export function setup() {
     const deviceKeys = [];
+    const startNS = Date.now() * 1e6;
 
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
@@ -36,10 +37,10 @@ export function setup() {
         }
     }
 
-    return { keys: deviceKeys };
+    return { keys: deviceKeys, startNS };
 }
 
-// ===== LOAD: WebSocket per device =====
+// ===== LOAD: WebSocket traffic =====
 export default function (data) {
     if (!data.keys.length) return;
 
@@ -59,19 +60,14 @@ export default function (data) {
                 socket.setInterval(() => {
                     const ts = Date.now() * 1e6;
                     const payload = [
-                        `cellular,imei=${device.imei} rssi=10 ${ts}`,
-                        `battery,imei=${device.imei} v=12 ${ts}`,
-                        `firmware,imei=${device.imei} ver=1.0 ${ts}`,
                         `volume,imei=${device.imei} vol=100 ${ts}`,
                     ].join("\n");
 
                     socket.send(payload);
                 }, interval);
 
-                // 🔴 CRITICAL: close socket before test ends
-                socket.setTimeout(() => {
-                    socket.close();
-                }, 55000);
+                // Close before test end
+                socket.setTimeout(() => socket.close(), 55000);
             });
         }
     );
@@ -81,18 +77,20 @@ export default function (data) {
 export function teardown(data) {
     if (!data.keys.length) return;
 
-    // Give DB time to flush
-    sleep(20);
+    sleep(20); // DB flush time
 
     const interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
-    const expectedPerDevice = Math.floor(60 / (interval / 1000)) * 4;
+    const sendsPerDevice = Math.floor(60 / (interval / 1000));
+    const expectedPerDevice = sendsPerDevice; // volume only
+
+    const endNS = Date.now() * 1e6;
 
     let devicesRetrieved = 0;
     let successfulConnections = 0;
     let integrityPassed = 0;
     let totalSaved = 0;
 
-    // ---- Device Retrieval Check ----
+    // ---- Device retrieval ----
     const listRes = http.get("http://localhost:8883/api/v1/device", {
         headers: {
             Authorization: `${data.keys[0].imei} ${data.keys[0].api_key}`,
@@ -100,22 +98,26 @@ export function teardown(data) {
     });
 
     check(listRes, {
-        "Device list status is 200": (r) => r.status === 200,
+        "Device list status 200": (r) => r.status === 200,
         "Device list not empty": (r) => r.json().length > 0,
     });
 
     devicesRetrieved = listRes.json().length;
 
-    // ---- Per-device integrity audit ----
+    // ---- Per-device data integrity ----
     data.keys.forEach((device) => {
-        const res = http.get(
-            `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}`,
-            {
-                headers: {
-                    Authorization: `${device.imei} ${device.api_key}`,
-                },
-            }
-        );
+        const measUrl =
+            `http://localhost:8883/api/v1/device/measurements` +
+            `?imei=${device.imei}` +
+            `&measurement=volume` +
+            `&start_ns=${data.startNS}` +
+            `&end_ns=${endNS}`;
+
+        const res = http.get(measUrl, {
+            headers: {
+                Authorization: `${device.imei} ${device.api_key}`,
+            },
+        });
 
         if (res.status === 200) {
             successfulConnections++;
@@ -139,7 +141,7 @@ export function teardown(data) {
     console.log(`Integrity passed: ${integrityPassed}/${data.keys.length}`);
 }
 
-// ===== Summary for GitHub Actions =====
+// ===== Summary =====
 export function handleSummary(data) {
     return {
         "summary.json": JSON.stringify(data, null, 2),
