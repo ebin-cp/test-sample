@@ -57,19 +57,19 @@ jobs:
 
       - name: Final Validation
         if: always()
-        run: |
-          echo "===== API Verification Report ====="
+  run: |
+    echo "===== API Verification Report ====="
 
-          # Device Retrieval Check
-          DEVICES=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/api/v1/device)
-          DEVICE_LIST=$(curl -s -H "Authorization: ${DEVICES}" http://localhost:8883/api/v1/device)
-          RETRIEVED_COUNT=$(echo "$DEVICE_LIST" | jq '. | length // 0')
-          echo "Device Retrieval Status: $DEVICES"
-          echo "Devices Retrieved: $RETRIEVED_COUNT"
+    # Device Retrieval Check
+    DEVICE_LIST=$(curl -s http://localhost:8883/api/v1/device)
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/api/v1/device)
+    echo "Device Retrieval Status: $HTTP_STATUS"
+    RETRIEVED_COUNT=$(echo "$DEVICE_LIST" | jq '. | length // 0')
+    echo "Devices Retrieved: $RETRIEVED_COUNT"
 
-          # k6 Metrics for Connections
-          CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
-          echo "Device Measurement Connections Established: $CONNS"
+    # k6 Metrics for Connections
+    CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
+    echo "Device Measurement Connections Established: $CONNS"
 
           # Data Integrity - informational only
           echo "===== DB Data Integrity Check ====="
@@ -91,7 +91,7 @@ jobs:
           echo "Total Rows in device_monitor_log: $TOTAL_ROWS"
 
           # GitHub Summary Table
-          echo "### 🔍 API Verification Summary" >> $GITHUB_STEP_SUMMARY
+          echo "### API Verification Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Expected | Actual |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|---|" >> $GITHUB_STEP_SUMMARY
           echo "| Devices Retrieved | 50 | $RETRIEVED_COUNT |" >> $GITHUB_STEP_SUMMARY
