@@ -1,7 +1,7 @@
 import http from "k6/http";
 import * as ulid from "https://esm.run/ulid";
 import ws from "k6/ws";
-import { check, fail, sleep } from "k6";
+import { check, fail } from "k6";
 import { Counter } from "k6/metrics";
 
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
@@ -10,12 +10,9 @@ const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
 export const options = {
     vus: 50,
     duration: "1m",
-    // thresholds: {
-    //     // Now this threshold has a metric to watch!
-    //     "registrations_total": ["count >= 50"],
-    //     "ws_metrics_sent_msgs": ["count >= 10000"],
-    //     "checks": ["rate > 0.9"],
-    // },
+    thresholds: {
+        "registrations_total": ["count >= 50"],
+    },
 };
 
 // Global variable to capture test start time for the query range

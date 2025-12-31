@@ -1,22 +1,30 @@
-name: 50-Device Load Test and API Verification
+name: API Verification Test
 
-# on: [push]
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  load-test:
+  api-verification:
     runs-on: ubuntu-latest
     environment: load_test
-
+    matrix:
+      WS_MSG_INTERVAL: [300]
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Start Services
+      - name: Create .env file
         run: |
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
           echo "DATABASE_HOST=mysql" >> .env
           cp .env docker/v1/.env
+
+      - name: Start Services    
           docker compose -f ./docker/v1/docker-compose.yml up -d
 
       - name: Wait for Health Check
@@ -24,13 +32,13 @@ jobs:
           echo "Waiting for API to be ready..."
           timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
 
-      - name: Setup k6
+      - name: Setup Grafana k6
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: k6 run tests/load-test.js
+        run: k6 run tests/api-verification-test.js
         env:
-          WS_MSG_INTERVAL: 300
+          WS_MSG_INTERVAL: ${{matrix.WS_MSG_INTERVAL}}
 
       - name: Capture Logs for Artifacts
         if: always()
@@ -53,16 +61,7 @@ jobs:
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          # 1. Extract Metrics from k6 Summary
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-          EXPECTED_ROWS=$(( WS_SENT * 4 ))
-
-          # 2. Extract Data from MySQL
-          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
-          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
-                         docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
-
-          # 3. Extract individual API check results
+          # 1. Extract individual API check results
           DEVICE_LIST_FAIL=$(jq '.metrics["checks{name:API: Device List 200}"].values.fails // 0' summary.json)
           MEAS_API_FAIL=$(jq '.metrics["checks{name:API: Measurements 200}"].values.fails // 0' summary.json)
           MEAS_DATA_FAIL=$(jq '.metrics["checks{name:API: Measurements Has Data}"].values.fails // 0' summary.json)
@@ -76,30 +75,17 @@ jobs:
             fi
           }
 
-          # 4. Print Report to Console Logs
+          # 2. Print Report to Console Logs
           echo "=========================================="
           echo "       LOAD TEST VALIDATION REPORT        "
           echo "=========================================="
-          echo "Devices Registered: $DEVICE_COUNT"
-          echo "WS Messages Sent:   $WS_SENT"
-          echo "Expected DB Rows:   $EXPECTED_ROWS"
-          echo "Actual DB Rows:     $ACTUAL_ROWS"
-          echo ""
           echo "API Validation Results:"
           echo " - Devices retrievable after creation: $(status $DEVICE_LIST_FAIL)"
           echo " - Measurements endpoint available:    $(status $MEAS_API_FAIL)"
           echo " - Measurements stored & retrievable:  $(status $MEAS_DATA_FAIL)"
           echo "=========================================="
 
-          # 5. Generate GitHub Job Summary (UI Table)
-          echo "### Load Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Devices Registered | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "| WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
-
+          # 3. Generate GitHub Job Summary (UI Table)
           echo "### API Validation" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
