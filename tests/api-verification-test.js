@@ -68,57 +68,39 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    console.log("Waiting 10s for DB buffer to clear...");
-    sleep(10);
-
-    const testEndTimeNS = (Date.now() * 1000000) + (5000 * 1000000);
-    const adjustedStartNS = data.startNS - (5000 * 1000000);
+    // 1. Calculate how many messages SHOULD be there
     const interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
-    
-    // Logic: (Test Duration 60s / Interval in seconds) * 4 records per send
     const expectedPerDevice = Math.floor(60 / (interval / 1000)) * 4;
 
     let devicesFound = 0;
-    let connectionsOk = 0;
-    let integrityPassed = 0;
+    let integrityPassedCount = 0;
     let totalSaved = 0;
 
-    // 1. Check Device List Retrieval
+    // 2. Retrieval Check
     const listRes = http.get("http://localhost:8883/api/v1/device", {
         headers: { "Authorization": `${data.keys[0].api_key}` }
     });
-    if (listRes.status === 200) {
-        devicesFound = listRes.json().length;
-    }
+    if (listRes.status === 200 && listRes.json().length === 50) devicesFound = 50;
 
-    // 2. Individual Device Audit Loop
+    // 3. Individual Integrity Loop
     data.keys.forEach((device) => {
-        const res = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`, 
+        const res = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${device.imei}`, 
             { headers: { Authorization: `${device.api_key}` } }
         );
 
         if (res.status === 200) {
-            connectionsOk++;
             const actualCount = res.json().length;
             totalSaved += actualCount;
-
-            if (actualCount === expectedPerDevice) {
-                integrityPassed++;
-            } else {
-                console.warn(`❌ Integrity Fail: IMEI ${device.imei} | Sent: ${expectedPerDevice} | DB: ${actualCount}`);
-            }
+            // Strict One-to-One Match
+            if (actualCount === expectedPerDevice) integrityPassedCount++;
         }
     });
 
-    // Send metrics to GitHub Summary
+    // 4. Update Gauges for the YAML table
     gauge_devices_found.add(devicesFound);
-    gauge_conn_success.add(connectionsOk);
-    gauge_integrity_pass.add(integrityPassed);
+    gauge_integrity_pass.add(integrityPassedCount);
     gauge_total_sent.add(expectedPerDevice * 50);
     gauge_total_saved.add(totalSaved);
-
-    console.log(`--- FINAL AUDIT ---`);
-    console.log(`Total Sent (All): ${expectedPerDevice * 50} | Total Saved (All): ${totalSaved}`);
 }
 
 export function handleSummary(data) {

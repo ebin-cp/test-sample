@@ -10,6 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: load_test
     strategy:
+      fail-fast: false
       matrix:
         WS_MSG_INTERVAL: [100, 200, 300, 400, 500]
     timeout-minutes: 5
