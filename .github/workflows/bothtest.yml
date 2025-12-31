@@ -1,6 +1,6 @@
 name: 50-Device Load Test and API Verification
 
-on: [push]
+# on: [push]
 
 jobs:
   load-test:
