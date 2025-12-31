@@ -57,24 +57,19 @@ jobs:
       - name: Final Validation
         if: always()
         run: |
-          # Extract counts from summary.json
-          ACTUAL_DEVICES=$(jq '.metrics["checks{name:API: Device List Count Match}"].values.passes // 0' summary.json)
-          SUCCESS_ENDPOINTS=$(jq '.metrics["checks{name:API: All Endpoints 200}"].values.passes // 0' summary.json)
-          DEVICES_WITH_DATA=$(jq '.metrics["checks{name:API: All Devices Have Data}"].values.passes // 0' summary.json)
+          # Pull the actual values from the Gauges
+          ACTUAL_DEVICES=$(jq '.metrics.devices_found_count.values.value // 0' summary.json)
+          SUCCESS_ENDPOINTS=$(jq '.metrics.endpoints_success_count.values.value // 0' summary.json)
+          DEVICES_WITH_DATA=$(jq '.metrics.devices_with_data_count.values.value // 0' summary.json)
           
-          # Since the checks above return 1 (for pass) or 0 (for fail), 
-          # we look at the console logs captured in the previous step for the raw numbers,
-          # or we can pull custom metrics if you added them. 
-          
-          echo "### Deep Trace Validation (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Deep Trace Validation (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Result | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Device Retrieval** | Found $ACTUAL_DEVICES of 50 | $([[ $ACTUAL_DEVICES -eq 1 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Endpoint Health** | $SUCCESS_ENDPOINTS of 50 Respond 200 | $([[ $SUCCESS_ENDPOINTS -eq 1 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Data Integrity** | $DEVICES_WITH_DATA of 50 have DB records | $([[ $DEVICES_WITH_DATA -eq 1 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Device Retrieval** | Found $ACTUAL_DEVICES of 50 | $([[ $ACTUAL_DEVICES -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Endpoint Health** | $SUCCESS_ENDPOINTS of 50 OK | $([[ $SUCCESS_ENDPOINTS -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Data Integrity** | $DEVICES_WITH_DATA of 50 have Data | $([[ $DEVICES_WITH_DATA -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
 
-          # Fail if any check is 0 (meaning the '100% pass' check failed)
-          if [[ "$ACTUAL_DEVICES" -eq 0 || "$SUCCESS_ENDPOINTS" -eq 0 || "$DEVICES_WITH_DATA" -eq 0 ]]; then
-            echo "::error::Validation Failed! Not all 50 devices verified correctly."
+          if [[ "$ACTUAL_DEVICES" -lt 50 || "$SUCCESS_ENDPOINTS" -lt 50 || "$DEVICES_WITH_DATA" -lt 50 ]]; then
+            echo "::error::Validation Failed! Only $DEVICES_WITH_DATA/50 devices had data."
             exit 1
           fi

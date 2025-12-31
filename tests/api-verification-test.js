@@ -1,10 +1,15 @@
 import http from "k6/http";
 import * as ulid from "https://esm.run/ulid";
 import ws from "k6/ws";
-import { check, fail } from "k6";
-import { Counter } from "k6/metrics";
+import { check, sleep } from "k6";
+import { Counter, Gauge } from "k6/metrics";
 
+// Metrics for GitHub Actions Summary
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
+const gauge_devices_found = new Gauge('devices_found_count');
+const gauge_endpoints_ok = new Gauge('endpoints_success_count');
+const gauge_data_integrity = new Gauge('devices_with_data_count');
+
 const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
 
 export const options = {
@@ -13,7 +18,6 @@ export const options = {
 };
 
 export function setup() {
-    // FIX 1: Capture start time here
     const startTime = Date.now() * 1000000; 
     const deviceKeys = [];
     
@@ -28,7 +32,6 @@ export function setup() {
             deviceKeys.push({ api_key: d.key.key, imei: imei });
         }
     }
-    // FIX 2: You MUST return startNS so teardown can use it
     return { keys: deviceKeys, startNS: startTime }; 
 }
 
@@ -61,29 +64,29 @@ export default function(data) {
 }
 
 export function teardown(data) {
+    if (!data || !data.keys || data.keys.length === 0) return;
+
+    // Wait 5 seconds to let the last DB writes finish
+    console.log("Waiting 5s for database synchronization...");
+    sleep(5);
+
     const allDevices = data.keys;
-    const testStartTimeNS = data.startNS;
     const bufferNS = 5000 * 1000000; 
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
-    const adjustedStartNS = testStartTimeNS - bufferNS;
+    const adjustedStartNS = data.startNS - bufferNS;
 
-    // Reporting Variables
     let deviceListCount = 0;
     let successfulEndpoints = 0;
     let devicesWithData = 0;
-    let totalRowsInDB = 0;
-    let devicesWithMismatch = [];
+    let failedImeis = [];
 
     // 1. Check Global Device List
     const listRes = http.get("http://localhost:8883/api/v1/device", {
-        headers: { "Authorization": `${allDevices[0].api_key}`, "Content-Type": "application/json" }
+        headers: { "Authorization": `${allDevices[0].api_key}` }
     });
-    
-    if (listRes.status === 200) {
-        deviceListCount = listRes.json().length;
-    }
+    if (listRes.status === 200) deviceListCount = listRes.json().length;
 
-    // 2. Loop through ALL devices to check Endpoints and Data Counts
+    // 2. Deep Reconciliation: Check every single device
     allDevices.forEach((device) => {
         const params = { headers: { "Authorization": `${device.api_key}` } };
         const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
@@ -93,31 +96,35 @@ export function teardown(data) {
         if (res.status === 200) {
             successfulEndpoints++;
             const logs = res.json();
-            const count = logs.length;
-            totalRowsInDB += count;
-
-            if (count > 0) {
+            if (Array.isArray(logs) && logs.length > 0) {
                 devicesWithData++;
             } else {
-                devicesWithMismatch.push(device.imei); // Track which device is empty
+                failedImeis.push(device.imei);
             }
+        } else {
+            failedImeis.push(`${device.imei} (Status: ${res.status})`);
         }
     });
 
-    // Console Output for GitHub Logs
-    console.log(`[Reconciliation Report]`);
-    console.log(`- Devices Created: 50 | Retrievable: ${deviceListCount}`);
-    console.log(`- Endpoint 200 OK: ${successfulEndpoints}/50`);
-    console.log(`- Devices with Data: ${devicesWithData}/50`);
-    console.log(`- Total Data Points Found: ${totalRowsInDB}`);
-    if (devicesWithMismatch.length > 0) {
-        console.log(`- FAILED IMEIs (Empty): ${devicesWithMismatch.join(", ")}`);
+    // Update Custom Gauges for GitHub YAML
+    gauge_devices_found.add(deviceListCount);
+    gauge_endpoints_ok.add(successfulEndpoints);
+    gauge_data_integrity.add(devicesWithData);
+
+    // Console Logging for GitHub Action Output
+    console.log(`--- API Verification Report ---`);
+    console.log(`Devices Created: 50 | Found: ${deviceListCount}`);
+    console.log(`Endpoints OK: ${successfulEndpoints}/50`);
+    console.log(`Devices with Records: ${devicesWithData}/50`);
+    
+    if (failedImeis.length > 0) {
+        console.warn(`Critical: The following IMEIs failed validation: ${failedImeis.slice(0, 5).join(", ")}${failedImeis.length > 5 ? '...' : ''}`);
     }
 
-    // Final Checks for the YAML to read
-    check(listRes, { "API: Device List Count Match": () => deviceListCount === 50 });
-    check(successfulEndpoints, { "API: All Endpoints 200": (val) => val === 50 });
-    check(devicesWithData, { "API: All Devices Have Data": (val) => val === 50 });
+    // Final Checks (Used for Exit Code)
+    check(deviceListCount, { "API: Device List Count Match": (v) => v === 50 });
+    check(successfulEndpoints, { "API: All Endpoints 200": (v) => v === 50 });
+    check(devicesWithData, { "API: All Devices Have Data": (v) => v === 50 });
 }
 
 export function handleSummary(data) {
