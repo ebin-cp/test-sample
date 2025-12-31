@@ -58,11 +58,11 @@ jobs:
       - name: Final Validation
         if: always()
         run: |
-          DEVICES=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
-          CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
-          INTEGRITY=$(jq -r '.metrics.integrity_passed_count.values.value // 0' summary.json)
-          TOTAL_SENT=$(jq -r '.metrics.total_sent_count.values.value // 0' summary.json)
-          TOTAL_RECV=$(jq -r '.metrics.total_saved_count.values.value // 0' summary.json)
+          DEVICES=$(jq -r '.metrics.devices_found_count.values.max // 0' summary.json)
+          CONNS=$(jq -r '.metrics.connections_success_count.values.max // 0' summary.json)
+          INTEGRITY=$(jq -r '.metrics.integrity_passed_count.values.max // 0' summary.json)
+          TOTAL_SENT=$(jq -r '.metrics.total_sent_count.values.max // 0' summary.json)
+          TOTAL_RECV=$(jq -r '.metrics.total_saved_count.values.max // 0' summary.json)
 
           echo "### 🔍 API Verification Report" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Expected | Actual | Result |" >> $GITHUB_STEP_SUMMARY
@@ -73,22 +73,22 @@ jobs:
           echo "| Total Data | $TOTAL_SENT | $TOTAL_RECV | $([[ "$TOTAL_SENT" -eq "$TOTAL_RECV" ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
 
           FAIL=false
-
+      
           if [[ "$DEVICES" -lt 50 ]]; then
             echo "::error::Only $DEVICES devices retrieved (expected 50)"
             FAIL=true
           fi
-
+      
           if [[ "$INTEGRITY" -lt 50 ]]; then
             echo "::error::Integrity passed for $INTEGRITY devices (expected 50)"
             FAIL=true
           fi
-
+      
           if [[ "$TOTAL_SENT" -ne "$TOTAL_RECV" ]]; then
             echo "::error::Data mismatch! Sent=$TOTAL_SENT Received=$TOTAL_RECV"
             FAIL=true
           fi
-
+      
           if [[ "$FAIL" == "true" ]]; then
             exit 1
           fi

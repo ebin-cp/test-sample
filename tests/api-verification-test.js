@@ -4,7 +4,7 @@ import ws from "k6/ws";
 import { check, sleep } from "k6";
 import { Gauge } from "k6/metrics";
 
-// Metrics (used by GitHub Actions)
+// ===== Metrics (used by CI) =====
 const gauge_devices_found = new Gauge("devices_found_count");
 const gauge_conn_success = new Gauge("connections_success_count");
 const gauge_integrity_pass = new Gauge("integrity_passed_count");
@@ -16,6 +16,7 @@ export const options = {
     duration: "1m",
 };
 
+// ===== SETUP: Create 50 devices =====
 export function setup() {
     const deviceKeys = [];
 
@@ -38,16 +39,21 @@ export function setup() {
     return { keys: deviceKeys };
 }
 
+// ===== LOAD: WebSocket per device =====
 export default function (data) {
     if (!data.keys.length) return;
 
     const index = __VU - 1;
     const device = data.keys[index % data.keys.length];
-    const url = "ws://localhost:8883/api/live";
+    const interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
 
     ws.connect(
-        url,
-        { headers: { Authorization: `${device.imei} ${device.api_key}` } },
+        "ws://localhost:8883/api/live",
+        {
+            headers: {
+                Authorization: `${device.imei} ${device.api_key}`,
+            },
+        },
         (socket) => {
             socket.on("open", () => {
                 socket.setInterval(() => {
@@ -60,14 +66,23 @@ export default function (data) {
                     ].join("\n");
 
                     socket.send(payload);
-                }, Number(__ENV.WS_MSG_INTERVAL) || 300);
+                }, interval);
+
+                // 🔴 CRITICAL: close socket before test ends
+                socket.setTimeout(() => {
+                    socket.close();
+                }, 55000);
             });
         }
     );
 }
 
+// ===== TEARDOWN: Verification =====
 export function teardown(data) {
-    sleep(10); // DB settle time
+    if (!data.keys.length) return;
+
+    // Give DB time to flush
+    sleep(20);
 
     const interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
     const expectedPerDevice = Math.floor(60 / (interval / 1000)) * 4;
@@ -77,9 +92,11 @@ export function teardown(data) {
     let integrityPassed = 0;
     let totalSaved = 0;
 
-    // 1️⃣ Device Retrieval
+    // ---- Device Retrieval Check ----
     const listRes = http.get("http://localhost:8883/api/v1/device", {
-        headers: { Authorization: data.keys[0].api_key },
+        headers: {
+            Authorization: `${data.keys[0].imei} ${data.keys[0].api_key}`,
+        },
     });
 
     check(listRes, {
@@ -89,11 +106,15 @@ export function teardown(data) {
 
     devicesRetrieved = listRes.json().length;
 
-    // 2️⃣ Per-device audit
+    // ---- Per-device integrity audit ----
     data.keys.forEach((device) => {
         const res = http.get(
             `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}`,
-            { headers: { Authorization: device.api_key } }
+            {
+                headers: {
+                    Authorization: `${device.imei} ${device.api_key}`,
+                },
+            }
         );
 
         if (res.status === 200) {
@@ -107,7 +128,7 @@ export function teardown(data) {
         }
     });
 
-    // 3️⃣ Metrics for CI
+    // ---- Report metrics to CI ----
     gauge_devices_found.add(devicesRetrieved);
     gauge_conn_success.add(successfulConnections);
     gauge_integrity_pass.add(integrityPassed);
@@ -115,9 +136,12 @@ export function teardown(data) {
     gauge_total_saved.add(totalSaved);
 
     console.log(`Expected per device: ${expectedPerDevice}`);
-    console.log(`Integrity passed: ${integrityPassed}/50`);
+    console.log(`Integrity passed: ${integrityPassed}/${data.keys.length}`);
 }
 
+// ===== Summary for GitHub Actions =====
 export function handleSummary(data) {
-    return { "summary.json": JSON.stringify(data) };
+    return {
+        "summary.json": JSON.stringify(data, null, 2),
+    };
 }
