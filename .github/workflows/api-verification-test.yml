@@ -58,23 +58,37 @@ jobs:
       - name: Final Validation
         if: always()
         run: |
-          # Extract values from the nested k6 summary JSON structure
           DEVICES=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
           CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
           INTEGRITY=$(jq -r '.metrics.integrity_passed_count.values.value // 0' summary.json)
           TOTAL_SENT=$(jq -r '.metrics.total_sent_count.values.value // 0' summary.json)
           TOTAL_RECV=$(jq -r '.metrics.total_saved_count.values.value // 0' summary.json)
 
-          echo "### 🔍 Full Reconciliation Audit Report" >> $GITHUB_STEP_SUMMARY
-          echo "| Test Category | Target | Actual | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Device Retrieval** | 50 | $DEVICES | $([[ "$DEVICES" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Device Connections** | 50 | $CONNS | $([[ "$CONNS" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Individual Integrity** | 50 | $INTEGRITY | $([[ "$INTEGRITY" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Total System Count** | $TOTAL_SENT | $TOTAL_RECV | $([[ "$TOTAL_SENT" -eq "$TOTAL_RECV" && "$TOTAL_SENT" -gt 0 ]] && echo "✅" || echo "⚠️ Loss Detected") |" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 API Verification Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Expected | Actual | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Devices Retrieved | 50 | $DEVICES | $([[ "$DEVICES" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Device Connections | 50 | $CONNS | $([[ "$CONNS" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Integrity Passed | 50 | $INTEGRITY | $([[ "$INTEGRITY" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Data | $TOTAL_SENT | $TOTAL_RECV | $([[ "$TOTAL_SENT" -eq "$TOTAL_RECV" ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
 
-          # Exit with error if core requirements failed
-          if [[ "$DEVICES" -lt 50 || "$INTEGRITY" -lt 50 ]]; then
-            echo "::error::Audit Failed! Mismatch detected in Device Retrieval or Data Integrity."
+          FAIL=false
+
+          if [[ "$DEVICES" -lt 50 ]]; then
+            echo "::error::Only $DEVICES devices retrieved (expected 50)"
+            FAIL=true
+          fi
+
+          if [[ "$INTEGRITY" -lt 50 ]]; then
+            echo "::error::Integrity passed for $INTEGRITY devices (expected 50)"
+            FAIL=true
+          fi
+
+          if [[ "$TOTAL_SENT" -ne "$TOTAL_RECV" ]]; then
+            echo "::error::Data mismatch! Sent=$TOTAL_SENT Received=$TOTAL_RECV"
+            FAIL=true
+          fi
+
+          if [[ "$FAIL" == "true" ]]; then
             exit 1
           fi
