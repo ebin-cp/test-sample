@@ -11,13 +11,12 @@ const count_sent_msgs = new Counter('total_sent_msgs');
 
 export const options = {
     vus: 50,
-    duration: "1m" // 1 minute test as requested
+    duration: "1m"
 };
 
 export function setup() {
     const startTimeNS = Date.now() * 1000000;
     const deviceKeys = [];
-    // 1. Create 50 devices dynamically
     for (let i = 0; i < 50; i++) {
         const imei = ulid.ulid();
         const res = http.post("http://localhost:8883/api/v1/device", 
@@ -48,37 +47,34 @@ export default function(data) {
                     `battery,imei=${myKey.imei} v=12 ${ts}`
                 ].join("\n");
                 socket.send(payload);
-                count_sent_msgs.add(1); // Track bundles sent
-            }, Number(__ENV.WS_MSG_INTERVAL) || 10000); // Default 10s
+                count_sent_msgs.add(1);
+            }, Number(__ENV.WS_MSG_INTERVAL) || 10000);
         });
-        
         socket.setTimeout(() => socket.close(), 60000);
     });
 }
 
 export function teardown(data) {
     console.log("--- Starting Final API Audit ---");
-    sleep(10); // Wait for DB flush
+    sleep(10); 
 
-    let successfulConns = 0;
     let totalDbRowsFromAPI = 0;
+    let successfulConns = 0;
 
     data.keys.forEach((device) => {
-        // Broaden the window slightly to avoid clock-drift issues
-        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=0&end_ns=${Date.now() * 1000000}`;
+        // Broad window (start_ns=0) to confirm if data landed at all
+        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=0&end_ns=${Date.now() * 1000000 + 5000000000}`;
 
         const res = http.get(url, {
-            headers: { Authorization: `${device.api_key}` },
-            timeout: '60s'
+            headers: { Authorization: `${device.api_key}` }
         });
 
         if (res.status === 200) {
-            const rowCount = res.json().length;
+            const rows = res.json();
+            const rowCount = Array.isArray(rows) ? rows.length : 0;
             console.log(`API CHECK [${device.imei}]: Found ${rowCount} rows`);
             successfulConns++;
             totalDbRowsFromAPI += rowCount;
-        } else {
-            console.log(`API CHECK [${device.imei}]: FAILED - Status ${res.status} - Body: ${res.body}`);
         }
     });
 
