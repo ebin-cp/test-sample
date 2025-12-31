@@ -1,5 +1,4 @@
 name: API Verification Test
-
 on:
   push:
     branches:

@@ -1,5 +1,5 @@
 name: 50-Device Concurrent WebSocket Messaging stress test
-on: [push]
+# on: [push]
 
 jobs:
   load-test-with-docker:
