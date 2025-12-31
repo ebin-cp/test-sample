@@ -25,6 +25,8 @@ jobs:
         run: sleep 20 && curl -s http://localhost:8883/health || echo "API starting..."
 
       - name: Run k6 Concurrent Test
+        id: run_k6
+        shell: bash
         run: |
           k6 run tests/test-check.js > test_output.log 2>&1
 
