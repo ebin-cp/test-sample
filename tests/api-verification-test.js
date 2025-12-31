@@ -61,40 +61,63 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    if (!data || !data.keys || data.keys.length === 0) return;
-
-    const testDevice = data.keys[0];
-    // FIX 3: Correctly pull startNS from the data object
-    const testStartTimeNS = data.startNS; 
+    const allDevices = data.keys;
+    const testStartTimeNS = data.startNS;
     const bufferNS = 5000 * 1000000; 
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
     const adjustedStartNS = testStartTimeNS - bufferNS;
 
-    const params = { 
-        headers: { 
-            "Authorization": `${testDevice.api_key}`,
-            "Content-Type": "application/json"
-        } 
-    };
+    // Reporting Variables
+    let deviceListCount = 0;
+    let successfulEndpoints = 0;
+    let devicesWithData = 0;
+    let totalRowsInDB = 0;
+    let devicesWithMismatch = [];
 
-    // 1. Check Device List
-    const listRes = http.get("http://localhost:8883/api/v1/device", params);
-
-    // 2. Check Measurements
-    const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=volume&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
-    const measRes = http.get(measUrl, params);
-    
-    // Checks
-    check(listRes, { "API: Device List 200": (r) => r.status === 200 });
-    check(measRes, {
-        "API: Measurements 200": (r) => r.status === 200,
-        "API: Measurements Has Data": (r) => {
-            const body = r.json();
-            const hasData = Array.isArray(body) && body.length > 0;
-            if (!hasData) console.warn(`⚠️ FAIL: No records found for ${testDevice.imei} between ${adjustedStartNS} and ${testEndTimeNS}`);
-            return hasData;
-        },
+    // 1. Check Global Device List
+    const listRes = http.get("http://localhost:8883/api/v1/device", {
+        headers: { "Authorization": `${allDevices[0].api_key}`, "Content-Type": "application/json" }
     });
+    
+    if (listRes.status === 200) {
+        deviceListCount = listRes.json().length;
+    }
+
+    // 2. Loop through ALL devices to check Endpoints and Data Counts
+    allDevices.forEach((device) => {
+        const params = { headers: { "Authorization": `${device.api_key}` } };
+        const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
+        
+        const res = http.get(measUrl, params);
+
+        if (res.status === 200) {
+            successfulEndpoints++;
+            const logs = res.json();
+            const count = logs.length;
+            totalRowsInDB += count;
+
+            if (count > 0) {
+                devicesWithData++;
+            } else {
+                devicesWithMismatch.push(device.imei); // Track which device is empty
+            }
+        }
+    });
+
+    // Console Output for GitHub Logs
+    console.log(`[Reconciliation Report]`);
+    console.log(`- Devices Created: 50 | Retrievable: ${deviceListCount}`);
+    console.log(`- Endpoint 200 OK: ${successfulEndpoints}/50`);
+    console.log(`- Devices with Data: ${devicesWithData}/50`);
+    console.log(`- Total Data Points Found: ${totalRowsInDB}`);
+    if (devicesWithMismatch.length > 0) {
+        console.log(`- FAILED IMEIs (Empty): ${devicesWithMismatch.join(", ")}`);
+    }
+
+    // Final Checks for the YAML to read
+    check(listRes, { "API: Device List Count Match": () => deviceListCount === 50 });
+    check(successfulEndpoints, { "API: All Endpoints 200": (val) => val === 50 });
+    check(devicesWithData, { "API: All Devices Have Data": (val) => val === 50 });
 }
 
 export function handleSummary(data) {

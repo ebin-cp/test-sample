@@ -57,37 +57,24 @@ jobs:
       - name: Final Validation
         if: always()
         run: |
-          # 1. Function to extract 'fails' for a specific check name
-          get_fail_count() {
-            # This jq command searches for the check by name and returns its fail count
-            jq --arg NAME "$1" '.metrics.checks.thresholds[]? | select(.name == $NAME) | .fails // 0' summary.json
-          }
+          # Extract counts from summary.json
+          ACTUAL_DEVICES=$(jq '.metrics["checks{name:API: Device List Count Match}"].values.passes // 0' summary.json)
+          SUCCESS_ENDPOINTS=$(jq '.metrics["checks{name:API: All Endpoints 200}"].values.passes // 0' summary.json)
+          DEVICES_WITH_DATA=$(jq '.metrics["checks{name:API: All Devices Have Data}"].values.passes // 0' summary.json)
+          
+          # Since the checks above return 1 (for pass) or 0 (for fail), 
+          # we look at the console logs captured in the previous step for the raw numbers,
+          # or we can pull custom metrics if you added them. 
+          
+          echo "### Deep Trace Validation (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
+          echo "| Check | Result | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Device Retrieval** | Found $ACTUAL_DEVICES of 50 | $([[ $ACTUAL_DEVICES -eq 1 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Endpoint Health** | $SUCCESS_ENDPOINTS of 50 Respond 200 | $([[ $SUCCESS_ENDPOINTS -eq 1 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Data Integrity** | $DEVICES_WITH_DATA of 50 have DB records | $([[ $DEVICES_WITH_DATA -eq 1 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
 
-          # 2. Extract specific counts
-          DEVICE_LIST_FAIL=$(get_fail_count "API: Device List 200")
-          MEAS_API_FAIL=$(get_fail_count "API: Measurements 200")
-          MEAS_DATA_FAIL=$(get_fail_count "API: Measurements Has Data")
-
-          # 3. Helper function for Emojis
-          status_icon() {
-            if [[ "$1" -eq 0 ]]; then echo "✅ Passed"; else echo "❌ Failed"; fi
-          }
-
-          # 4. Generate GitHub Job Summary Table
-          echo "### API Validation Details (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
-          echo "| Verification Step | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Device List Retrieval | $(status_icon $DEVICE_LIST_FAIL) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Measurements Endpoint | $(status_icon $MEAS_API_FAIL) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Data Integrity (Has Records) | $(status_icon $MEAS_DATA_FAIL) |" >> $GITHUB_STEP_SUMMARY
-
-          # 5. Console Output for Debugging
-          echo "Device List Failures: $DEVICE_LIST_FAIL"
-          echo "Meas API Failures: $MEAS_API_FAIL"
-          echo "Data Storage Failures: $MEAS_DATA_FAIL"
-
-          # 6. Final Exit Logic (Fail if any variable is > 0)
-          if [[ "$DEVICE_LIST_FAIL" -gt 0 || "$MEAS_API_FAIL" -gt 0 || "$MEAS_DATA_FAIL" -gt 0 ]]; then
-            echo "::error::API Verification Failed. Check the summary table for details."
+          # Fail if any check is 0 (meaning the '100% pass' check failed)
+          if [[ "$ACTUAL_DEVICES" -eq 0 || "$SUCCESS_ENDPOINTS" -eq 0 || "$DEVICES_WITH_DATA" -eq 0 ]]; then
+            echo "::error::Validation Failed! Not all 50 devices verified correctly."
             exit 1
           fi
