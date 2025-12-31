@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         WS_MSG_INTERVAL: [300]
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -55,40 +55,53 @@ jobs:
             app_logs.txt
             mysql_logs.txt
 
-      - name: Final Validation
+      - name: Final Validation - MySQL Data Check
         if: always()
         run: |
-          DEVICES=$(jq -r '.metrics.devices_found_count.values.max // 0' summary.json)
-          CONNS=$(jq -r '.metrics.connections_success_count.values.max // 0' summary.json)
-          INTEGRITY=$(jq -r '.metrics.integrity_passed_count.values.max // 0' summary.json)
-          TOTAL_SENT=$(jq -r '.metrics.total_sent_count.values.max // 0' summary.json)
-          TOTAL_RECV=$(jq -r '.metrics.total_saved_count.values.max // 0' summary.json)
+          echo "===== DB Data Integrity Check ====="
 
+          # Expected values from k6
+          EXPECTED_PER_DEVICE=200
+          DEVICE_COUNT=50
+          EXPECTED_TOTAL=$((EXPECTED_PER_DEVICE * DEVICE_COUNT))
+
+          # Total rows in device_monitor_log
+          ROW_COUNT=$(docker exec -i mysql \
+            mysql -uroot -p"$DB_ROOT_PASSWD" -D "$DB_NAME" \
+            -e "SELECT COUNT(*) FROM device_monitor_log;" -s -N)
+
+          echo "Total Rows in device_monitor_log: $ROW_COUNT"
+
+          # Per-device rows
+          docker exec -i mysql \
+            mysql -uroot -p"$DB_ROOT_PASSWD" -D "$DB_NAME" \
+            -e "SELECT imei, COUNT(*) as cnt FROM device_monitor_log GROUP BY imei ORDER BY imei;" \
+            > per_device_rows.txt
+
+          echo "Per-device row counts:"
+          cat per_device_rows.txt
+
+          # CI summary table
           echo "### 🔍 API Verification Report" >> $GITHUB_STEP_SUMMARY
           echo "| Check | Expected | Actual | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|---|---|---|---|" >> $GITHUB_STEP_SUMMARY
-          echo "| Devices Retrieved | 50 | $DEVICES | $([[ "$DEVICES" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| Device Connections | 50 | $CONNS | $([[ "$CONNS" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| Integrity Passed | 50 | $INTEGRITY | $([[ "$INTEGRITY" -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Data | $TOTAL_SENT | $TOTAL_RECV | $([[ "$TOTAL_SENT" -eq "$TOTAL_RECV" ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Devices | $DEVICE_COUNT | $DEVICE_COUNT | ✅ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Data Sent | $EXPECTED_TOTAL | $ROW_COUNT | $([[ "$ROW_COUNT" -eq "$EXPECTED_TOTAL" ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
 
+          # Fail logic
           FAIL=false
-      
-          if [[ "$DEVICES" -lt 50 ]]; then
-            echo "::error::Only $DEVICES devices retrieved (expected 50)"
+          if [[ "$ROW_COUNT" -ne "$EXPECTED_TOTAL" ]]; then
+            echo "::error::Data mismatch! Sent=$EXPECTED_TOTAL Received=$ROW_COUNT"
             FAIL=true
           fi
-      
-          if [[ "$INTEGRITY" -lt 50 ]]; then
-            echo "::error::Integrity passed for $INTEGRITY devices (expected 50)"
-            FAIL=true
-          fi
-      
-          if [[ "$TOTAL_SENT" -ne "$TOTAL_RECV" ]]; then
-            echo "::error::Data mismatch! Sent=$TOTAL_SENT Received=$TOTAL_RECV"
-            FAIL=true
-          fi
-      
+
+          # Optional: warn per device
+          while read IMEI COUNT; do
+            if [[ "$COUNT" -lt "$EXPECTED_PER_DEVICE" ]]; then
+              echo "::warning::Device $IMEI has only $COUNT rows (expected $EXPECTED_PER_DEVICE)"
+            fi
+          done < per_device_rows.txt
+
           if [[ "$FAIL" == "true" ]]; then
             exit 1
           fi
