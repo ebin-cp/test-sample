@@ -87,9 +87,9 @@ export function teardown(data) {
     
     if (measRes.status === 200) {
         const logs = measRes.json();
-        console.log(`[API Output] Log Retrieval Check: Found ${logs.length} volume records for IMEI ${testDevice.imei}.`);
+        // console.log(`[API Output] Log Retrieval Check: Found ${logs.length} volume records for IMEI ${testDevice.imei}.`);
         if (logs.length > 0) {
-            console.log(`[API Output] Sample Data Point: Value=${logs[0].value} at ${logs[0].timestamp_ns}`);
+            // console.log(`[API Output] Sample Data Point: Value=${logs[0].value} at ${logs[0].timestamp_ns}`);
         }
     }
 

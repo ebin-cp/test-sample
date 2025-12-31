@@ -11,7 +11,7 @@ jobs:
     environment: load_test
     strategy:
       matrix:
-        WS_MSG_INTERVAL: [300]
+        WS_MSG_INTERVAL: [300, 400, 500]
     timeout-minutes: 5
     steps:
       - name: Checkout code
@@ -75,7 +75,7 @@ jobs:
 
           # 2. Print Report to Console Logs
           echo "=========================================="
-          echo "       LOAD TEST VALIDATION REPORT        "
+          echo "        API TEST VALIDATION REPORT        "
           echo "=========================================="
           echo "API Validation Results:"
           echo " - Devices retrievable after creation: $(status $DEVICE_LIST_FAIL)"
