@@ -1,4 +1,4 @@
-name: 50-Device API sample test check
+name: 50-Device API Verification sample test check
 
 on: [push]
 
@@ -6,13 +6,13 @@ jobs:
   device-verification:
     runs-on: ubuntu-latest
     environment: test
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create .env file and start services
+      - name: Create .env file and start Docker services
         run: |
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
@@ -31,31 +31,30 @@ jobs:
       - name: Run Device Verification Test
         run: k6 run tests/test-check.js --summary-export=summary.json
 
-      - name: Show Test Summary
-        run: cat summary.json
-
-      - name: Get Total Devices Count from MySQL
-        env:
-          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
+      - name: Append Test & DB Metrics to GitHub Summary
         run: |
-          DEVICE_COUNT=$(docker exec -e MYSQL_PWD=mysql mysql \
-            -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;")
-          echo "Total devices in DB: $DEVICE_COUNT"
+          echo "## K6 Test Summary" >> $GITHUB_STEP_SUMMARY
+          jq -r '.metrics | to_entries[] | "### \(.key)\nPasses: \(.value.passes // 0)\nFails: \(.value.fails // 0)"' summary.json >> $GITHUB_STEP_SUMMARY
 
-      - name: Get Total Measurements Count from MySQL
-        env:
-          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
-        run: |
-          TOTAL_COUNT=$(docker exec -e MYSQL_PWD=mysql mysql \
-            -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
-          echo "Total measurement entries in DB: $TOTAL_COUNT"
-
-      - name: Get Individual Device Measurement Counts
-        env:
-          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
-        run: |
-          echo "Individual device measurement counts:"
-          docker exec -e MYSQL_PWD=mysql mysql -u root -N -s -e "SELECT imei, COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log GROUP BY imei;" 
+          echo "## Database Metrics" >> $GITHUB_STEP_SUMMARY
+          
+          # Total devices
+          DEVICE_COUNT=$(docker exec -i mysql \
+            mysql -u root -p"${{ secrets.DB_ROOT_PASSWD }}" -N -s -e "SELECT COUNT(*) FROM ${{ secrets.DB_NAME }}.devices;")
+          echo "- Total devices in DB: $DEVICE_COUNT" >> $GITHUB_STEP_SUMMARY
+          
+          # Total measurements
+          TOTAL_MEASUREMENTS=$(docker exec -i mysql \
+            mysql -u root -p"${{ secrets.DB_ROOT_PASSWD }}" -N -s -e "SELECT COUNT(*) FROM ${{ secrets.DB_NAME }}.device_monitor_log;")
+          echo "- Total measurements in DB: $TOTAL_MEASUREMENTS" >> $GITHUB_STEP_SUMMARY
+          
+          # Per-device measurement counts
+          echo "### Per-device counts:" >> $GITHUB_STEP_SUMMARY
+          docker exec -i mysql \
+            mysql -u root -p"${{ secrets.DB_ROOT_PASSWD }}" -N -s -e "SELECT imei, COUNT(*) FROM ${{ secrets.DB_NAME }}.device_monitor_log GROUP BY imei;" \
+            | while read imei count; do
+                echo "- $imei: $count" >> $GITHUB_STEP_SUMMARY
+            done
 
       - name: Stop Docker Services
         if: always()
