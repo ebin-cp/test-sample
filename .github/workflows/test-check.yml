@@ -28,39 +28,29 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Run k6 Concurrent Test
-        id: run_k6
         shell: bash
         run: |
-          # Increase system limits for concurrent WebSockets
           ulimit -n 4096
+          # We use --logformat raw to make parsing easier
+          k6 run tests/test-check.js --logformat raw > test_output.log 2>&1 || true
           
-          # Check if file exists before running to avoid 107/127 errors
-          if [ ! -f tests/test-check.js ]; then
-            echo "Error: tests/test-check.js not found!"
-            ls -R tests/
-            exit 1
-          fi
-
-          # Run k6. We use --quiet to keep the log file clean for parsing
-          k6 run tests/test-check.js --quiet > test_output.log 2>&1 || true
+          # Debug: Print logs to the GH console so you can see if they exist
+          echo "--- START OF K6 LOG ---"
+          cat test_output.log
+          echo "--- END OF K6 LOG ---"
 
       - name: Generate GitHub Summary
         if: always()
         run: |
           echo "## 📊 Test Results" >> $GITHUB_STEP_SUMMARY
           
-          # Check for WebSocket Errors
-          if grep -q "WS_ERROR" test_output.log; then
-            echo "### ⚠️ Connection Errors Found" >> $GITHUB_STEP_SUMMARY
-            grep "WS_ERROR" test_output.log >> $GITHUB_STEP_SUMMARY
-          fi
-
           echo "### 📱 Device Creation" >> $GITHUB_STEP_SUMMARY
           echo "| Status | Is Empty | Count |" >> $GITHUB_STEP_SUMMARY
           echo "| --- | --- | --- |" >> $GITHUB_STEP_SUMMARY
-          grep "DEVICE_CHECK" test_output.log | awk -F'|' '{print "| "$2" | "$3" | "$4" |"}' | sed 's/Status://;s/Empty://;s/Count://' >> $GITHUB_STEP_SUMMARY
+          # Improved Parsing
+          grep "DEV_CHECK_MARKER" test_output.log | awk -F'|' '{print "| "$2" | "$3" | "$4" |"}' >> $GITHUB_STEP_SUMMARY
 
           echo "### 🧪 Measurement Counts" >> $GITHUB_STEP_SUMMARY
           echo "| IMEI | API Status | Count (60 Expected) |" >> $GITHUB_STEP_SUMMARY
           echo "| --- | --- | --- |" >> $GITHUB_STEP_SUMMARY
-          grep "MEASURE_CHECK" test_output.log | awk -F'|' '{print "| "$2" | "$3" | "$4" |"}' >> $GITHUB_STEP_SUMMARY
+          grep "MEASURE_CHECK_MARKER" test_output.log | awk -F'|' '{print "| "$2" | "$3" | "$4" |"}' >> $GITHUB_STEP_SUMMARY
