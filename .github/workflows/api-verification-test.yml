@@ -57,39 +57,37 @@ jobs:
       - name: Final Validation
         if: always()
         run: |
-          # 1. Extract failure counts using a robust contains filter
-          # This looks for the check name inside the checks metric
-          DEVICE_LIST_FAIL=$(jq '.metrics.checks.values.fails // 0' summary.json)
-          
-          # Since you have multiple checks, we want to ensure we catch ANY failure in the checks group
-          TOTAL_CHECK_FAILS=$(jq '.metrics.checks.values.fails' summary.json)
-          TOTAL_CHECK_PASSES=$(jq '.metrics.checks.values.passes' summary.json)
+          # 1. Function to extract 'fails' for a specific check name
+          get_fail_count() {
+            # This jq command searches for the check by name and returns its fail count
+            jq --arg NAME "$1" '.metrics.checks.thresholds[]? | select(.name == $NAME) | .fails // 0' summary.json
+          }
 
-          # 2. Specifically check if "Has Data" passed
-          # We look at the 'passes' vs 'fails' for that specific logic
-          echo "=========================================="
-          echo "      API VALIDATION REPORT               "
-          echo "=========================================="
-          echo "Total Successful Checks: $TOTAL_CHECK_PASSES"
-          echo "Total Failed Checks:     $TOTAL_CHECK_FAILS"
-          echo "=========================================="
+          # 2. Extract specific counts
+          DEVICE_LIST_FAIL=$(get_fail_count "API: Device List 200")
+          MEAS_API_FAIL=$(get_fail_count "API: Measurements 200")
+          MEAS_DATA_FAIL=$(get_fail_count "API: Measurements Has Data")
 
-          # 3. Generate the GitHub UI Summary
-          echo "### API Test Results (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
-          if [ "$TOTAL_CHECK_FAILS" -eq "0" ] && [ "$TOTAL_CHECK_PASSES" -gt 0 ]; then
-            echo "**ALL CHECKS PASSED**" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "**SOME CHECKS FAILED**" >> $GITHUB_STEP_SUMMARY
-            echo "Review the 'Capture Logs' section or download artifacts for details." >> $GITHUB_STEP_SUMMARY
-          fi
-          
-          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          # 3. Helper function for Emojis
+          status_icon() {
+            if [[ "$1" -eq 0 ]]; then echo "✅ Passed"; else echo "❌ Failed"; fi
+          }
+
+          # 4. Generate GitHub Job Summary Table
+          echo "### API Validation Details (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
+          echo "| Verification Step | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Passed Checks | $TOTAL_CHECK_PASSES |" >> $GITHUB_STEP_SUMMARY
-          echo "| Failed Checks | $TOTAL_CHECK_FAILS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Device List Retrieval | $(status_icon $DEVICE_LIST_FAIL) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Measurements Endpoint | $(status_icon $MEAS_API_FAIL) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Data Integrity (Has Records) | $(status_icon $MEAS_DATA_FAIL) |" >> $GITHUB_STEP_SUMMARY
 
-          # 4. CRITICAL: Exit with error if there are ANY failures
-          if [ "$TOTAL_CHECK_FAILS" -gt 0 ]; then
-            echo "::error::API Validation Failed! One or more checks (like 'Has Data') failed."
+          # 5. Console Output for Debugging
+          echo "Device List Failures: $DEVICE_LIST_FAIL"
+          echo "Meas API Failures: $MEAS_API_FAIL"
+          echo "Data Storage Failures: $MEAS_DATA_FAIL"
+
+          # 6. Final Exit Logic (Fail if any variable is > 0)
+          if [[ "$DEVICE_LIST_FAIL" -gt 0 || "$MEAS_API_FAIL" -gt 0 || "$MEAS_DATA_FAIL" -gt 0 ]]; then
+            echo "::error::API Verification Failed. Check the summary table for details."
             exit 1
           fi
