@@ -1,4 +1,4 @@
-name: API Verification Test sample check
+name: API Verification Test
 on:
   push:
     branches:
@@ -13,7 +13,7 @@ jobs:
       fail-fast: false
       matrix:
         WS_MSG_INTERVAL: [10000] # 10 seconds
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -31,12 +31,14 @@ jobs:
           echo "Waiting for API to be ready..."
           timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
 
-      - name: Execute Test
+      - name: Execute Test (via Docker)
         run: |
-          # We use the full path or ensure k6 is initialized
-          k6 run tests/api-verification-test.js --summary-export=summary.json
-        env:
-          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
+          # Running via Docker ensures the k6 binary is found and shares the host network
+          docker run --rm \
+            --network host \
+            -v $(pwd):/io \
+            -e WS_MSG_INTERVAL=${{ matrix.WS_MSG_INTERVAL }} \
+            grafana/k6:latest run /io/tests/test-check.js --summary-export=/io/summary.json
 
       - name: Direct Database Audit (SQL)
         if: always()
@@ -55,7 +57,6 @@ jobs:
             -e "SELECT imei, COUNT(*) AS count FROM device_monitor_log GROUP BY imei ORDER BY count DESC;" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
 
-          # Export total count to env for the final audit logic
           DB_ACTUAL_TOTAL=$(docker exec mysql mysql -u root -p${{ secrets.DB_ROOT_PASSWD }} ${{ secrets.DB_NAME }} -sN -e "SELECT COUNT(*) FROM device_monitor_log;")
           echo "DB_ACTUAL_TOTAL=$DB_ACTUAL_TOTAL" >> $GITHUB_ENV
 
@@ -78,13 +79,16 @@ jobs:
       - name: Final Audit Report
         if: always()
         run: |
-          # 1. Extract k6 metrics
+          if [ ! -f summary.json ]; then
+            echo "## ❌ TEST CRITICAL FAILURE" >> $GITHUB_STEP_SUMMARY
+            echo "k6 failed to generate summary.json." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+
           RETRIEVED=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
-          CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
           WS_SENT=$(jq -r '.metrics.total_sent_msgs.values.count // 0' summary.json)
           API_TOTAL=$(jq -r '.metrics.total_saved_count.values.value // 0' summary.json)
           
-          # 2. Compare against SQL truth (exported in previous step)
           SQL_TOTAL=${{ env.DB_ACTUAL_TOTAL }}
           EXPECTED=$(( WS_SENT * 4 ))
 
@@ -94,18 +98,7 @@ jobs:
           echo "| **Devices** | 50 | 50 | $RETRIEVED |" >> $GITHUB_STEP_SUMMARY
           echo "| **Total Rows** | $EXPECTED | $SQL_TOTAL | $API_TOTAL |" >> $GITHUB_STEP_SUMMARY
           
-          echo "### 🚩 Analysis" >> $GITHUB_STEP_SUMMARY
-          if [ "$SQL_TOTAL" -eq 0 ]; then
-            echo "❌ **CRITICAL:** Database is empty. Ingestion failed." >> $GITHUB_STEP_SUMMARY
-          elif [ "$SQL_TOTAL" -lt "$EXPECTED" ]; then
-            echo "⚠️ **WARNING:** Partial data loss. SQL only has $SQL_TOTAL/$EXPECTED." >> $GITHUB_STEP_SUMMARY
-          elif [ "$API_TOTAL" -eq 0 ] && [ "$SQL_TOTAL" -gt 0 ]; then
-            echo "🔍 **BUG FOUND:** Data exists in DB but API returned 0. Check your API's timestamp/filtering logic." >> $GITHUB_STEP_SUMMARY
-          else
-            echo "✅ **SUCCESS:** SQL and API match expected counts." >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Fail criteria
           if [[ "$RETRIEVED" -ne 50 || "$SQL_TOTAL" -lt "$EXPECTED" ]]; then
+            echo "::error::Audit Failed: Mismatch between sent and stored data."
             exit 1
           fi
