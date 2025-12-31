@@ -1,5 +1,6 @@
 name: 50-Device Concurrent WebSocket Messaging stress test
-# on: [push]
+on:
+    workflow_dispatch:
 
 jobs:
   load-test-with-docker:

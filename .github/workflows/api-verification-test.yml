@@ -9,8 +9,9 @@ jobs:
   api-verification:
     runs-on: ubuntu-latest
     environment: load_test
-    matrix:
-      WS_MSG_INTERVAL: [300]
+    strategy:
+      matrix:
+        WS_MSG_INTERVAL: [300]
     timeout-minutes: 5
     steps:
       - name: Checkout code
