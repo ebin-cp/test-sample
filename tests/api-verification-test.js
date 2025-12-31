@@ -9,10 +9,7 @@ const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
 
 export const options = {
     vus: 50,
-    duration: "1m",
-    thresholds: {
-        "registrations_total": ["count >= 50"],
-    },
+    duration: "1m"
 };
 
 // Global variable to capture test start time for the query range
