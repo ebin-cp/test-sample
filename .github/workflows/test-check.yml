@@ -1,0 +1,62 @@
+name: 50-Device API sample test check
+
+on: [push]
+
+jobs:
+  device-verification:
+    runs-on: ubuntu-latest
+    environment: test
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file and start services
+        run: |
+          echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
+          echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
+          echo "DATABASE_HOST=mysql" >> .env
+          cp .env docker/v1/.env  
+          docker compose -f ./docker/v1/docker-compose.yml up -d
+
+      - name: Wait for Health Check
+        run: |
+          echo "Waiting for API to be ready..."
+          timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
+
+      - name: Setup Grafana k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Run Device Verification Test
+        run: k6 run tests/test-check.js --summary-export=summary.json
+
+      - name: Show Test Summary
+        run: cat summary.json
+
+      - name: Get Total Devices Count from MySQL
+        env:
+          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
+        run: |
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD=mysql mysql \
+            -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;")
+          echo "Total devices in DB: $DEVICE_COUNT"
+
+      - name: Get Total Measurements Count from MySQL
+        env:
+          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
+        run: |
+          TOTAL_COUNT=$(docker exec -e MYSQL_PWD=mysql mysql \
+            -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
+          echo "Total measurement entries in DB: $TOTAL_COUNT"
+
+      - name: Get Individual Device Measurement Counts
+        env:
+          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
+        run: |
+          echo "Individual device measurement counts:"
+          docker exec -e MYSQL_PWD=mysql mysql -u root -N -s -e "SELECT imei, COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log GROUP BY imei;" 
+
+      - name: Stop Docker Services
+        if: always()
+        run: docker compose -f ./docker/v1/docker-compose.yml down -v

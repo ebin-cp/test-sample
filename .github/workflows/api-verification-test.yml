@@ -2,7 +2,7 @@ name: API Verification Test
 on:
   push:
     branches:
-      - main
+      # - main
   workflow_dispatch:
 
 jobs:
