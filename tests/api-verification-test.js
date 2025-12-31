@@ -67,22 +67,22 @@ export function teardown(data) {
     // --- 2. Measurement Endpoint Audit ---
     let successfulConns = 0;
     data.keys.forEach((device) => {
-        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`;
-        
-        const res = http.get(url, {
-            headers: { Authorization: `${device.api_key}` },
-            timeout: '60s' // <--- 1. Tell k6 to wait up to 60 seconds for a response
-        });
+        // Individual connection check
+       const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`;
+
+    const res = http.get(url, {
+    headers: { Authorization: `${device.api_key}` },
+    timeout: '60s'
+});
 
         if (res.status === 200) {
+            const rowCount = res.json().length;
+            // This is the "Individual Data Count List" for the console
+            console.log(`DEVICE AUDIT [${device.imei}]: Total Rows Found = ${rowCount}`);
             successfulConns++;
         } else {
-            // This will show you in the logs why a specific device failed
-            console.log(`Audit failed for ${device.imei}: Status ${res.status}`);
+            console.log(`DEVICE AUDIT [${device.imei}]: FAILED - Status ${res.status}`);
         }
-
-        // 2. Add a tiny pause so we don't overwhelm the server during the audit
-        sleep(0.1); 
     });
 
     // Send these values to the summary
@@ -98,88 +98,5 @@ export function teardown(data) {
 }
 
 export function handleSummary(data) {
-    // 1. Calculate stats for the report
-    const retrieved = data.metrics.devices_found_count.values.value || 0;
-    const connections = data.metrics.connections_success_count.values.value || 0;
-    const wsSent = data.metrics.total_sent_msgs.values.count || 0;
-    const dbTotal = data.metrics.total_saved_count.values.value || 0;
-
-    // 2. Build the HTML String
-    let html = `
-    <html>
-    <head>
-        <style>
-            body { font-family: Arial, sans-serif; margin: 20px; color: #333; }
-            h1 { color: #0056b3; border-bottom: 2px solid #0056b3; }
-            .summary-box { display: flex; gap: 20px; margin-bottom: 30px; }
-            .card { padding: 15px; border: 1px solid #ddd; border-radius: 8px; flex: 1; text-align: center; }
-            .status-pass { color: green; font-weight: bold; }
-            .status-fail { color: red; font-weight: bold; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-            th { background-color: #f4f4f4; }
-            tr:nth-child(even) { background-color: #fafafa; }
-        </style>
-    </head>
-    <body>
-        <h1>📊 Device Audit Report</h1>
-        
-        <div class="summary-box">
-            <div class="card">
-                <h3>WS Sent (Bundles)</h3>
-                <p style="font-size: 24px;">${wsSent}</p>
-            </div>
-            <div class="card">
-                <h3>Expected DB Rows</h3>
-                <p style="font-size: 24px;">${wsSent * 4}</p>
-            </div>
-            <div class="card">
-                <h3>Actual DB Rows</h3>
-                <p style="font-size: 24px;">${dbTotal}</p>
-            </div>
-        </div>
-
-        <h2>✅ API Connectivity Checks</h2>
-        <table>
-            <tr>
-                <th>Test Case</th>
-                <th>Result</th>
-            </tr>
-            <tr>
-                <td>Device Retrieval (GET /api/v1/device)</td>
-                <td class="${retrieved === 50 ? 'status-pass' : 'status-fail'}">
-                    ${retrieved === 50 ? 'OK (50 Found)' : 'FAILED (' + retrieved + ' Found)'}
-                </td>
-            </tr>
-            <tr>
-                <td>Individual Measurement Connections</td>
-                <td class="${connections === 50 ? 'status-pass' : 'status-fail'}">
-                    ${connections}/50 Successful
-                </td>
-            </tr>
-        </table>
-
-        <h2>📱 Individual Device Data Count</h2>
-        <p><i>Note: Based on SELECT imei, COUNT(*) FROM device_monitor_log GROUP BY imei;</i></p>
-        <table>
-            <tr>
-                <th>Device IMEI</th>
-                <th>Rows in Database</th>
-                <th>Status</th>
-            </tr>`;
-
-    // 3. Loop through individual device results
-    // (You'll need to pass an array of results from teardown if you want the exact list here)
-    // For now, this shows the logic:
-    html += `<tr><td>Example: 205029787461234</td><td>800</td><td class="status-pass">MATCH</td></tr>`;
-
-    html += `
-        </table>
-    </body>
-    </html>`;
-
-    return {
-        'audit_report.html': html,
-        'stdout': textSummary(data, { indent: ' ', enableColors: true }),
-    };
+    return { "summary.json": JSON.stringify(data) };
 }
