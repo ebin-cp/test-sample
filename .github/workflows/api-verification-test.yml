@@ -57,26 +57,25 @@ jobs:
       - name: Final Validation
         if: always()
         run: |
-          # Use 'jq' to extract the value, defaulting to 0 if not found
+          # Pull values from summary.json
+          CREATED_TARGET=50
           ACTUAL_DEVICES=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
-          SUCCESS_ENDPOINTS=$(jq -r '.metrics.endpoints_success_count.values.value // 0' summary.json)
-          DEVICES_WITH_DATA=$(jq -r '.metrics.devices_with_data_count.values.value // 0' summary.json)
-          
-          echo "### 📊 Deep Trace Validation (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Result | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          
-          # Helper logic for status icons
-          [[ "$ACTUAL_DEVICES" -eq 50 ]] && DEVICE_STAT="✅" || DEVICE_STAT="❌"
-          [[ "$SUCCESS_ENDPOINTS" -eq 50 ]] && ENDPOINT_STAT="✅" || ENDPOINT_STAT="❌"
-          [[ "$DEVICES_WITH_DATA" -eq 50 ]] && DATA_STAT="✅" || DATA_STAT="❌"
+          WS_CONNS=$(jq -r '.metrics.ws_connections_established.values.value // 0' summary.json)
+          TOTAL_SENT=$(jq -r '.metrics.total_sent_msgs.values.count // 0' summary.json)
+          TOTAL_RECV=$(jq -r '.metrics.db_records_total.values.value // 0' summary.json)
 
-          echo "| **Device Retrieval** | Found $ACTUAL_DEVICES of 50 | $DEVICE_STAT |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Endpoint Health** | $SUCCESS_ENDPOINTS of 50 OK | $ENDPOINT_STAT |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Data Integrity** | $DEVICES_WITH_DATA of 50 have Data | $DATA_STAT |" >> $GITHUB_STEP_SUMMARY
+          # Calculate Data Loss
+          LOSS_COUNT=$((TOTAL_SENT - TOTAL_RECV))
           
-          # Final Exit Logic
-          if [ "$ACTUAL_DEVICES" -lt 50 ] || [ "$SUCCESS_ENDPOINTS" -lt 50 ] || [ "$DEVICES_WITH_DATA" -lt 50 ]; then
-            echo "::error::Validation Failed! Results: Devices=$ACTUAL_DEVICES, Endpoints=$SUCCESS_ENDPOINTS, Data=$DEVICES_WITH_DATA"
+          echo "### 📊 Deep Trace Reconciliation (Interval: ${{ matrix.WS_MSG_INTERVAL }}ms)" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Target | Actual | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Device Retrieval** | $CREATED_TARGET | $ACTUAL_DEVICES | $([[ $ACTUAL_DEVICES -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **WS Connections** | $CREATED_TARGET | $WS_CONNS | $([[ $WS_CONNS -eq 50 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total Msgs Sent** | - | $TOTAL_SENT | 📤 |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total Msgs Saved** | $TOTAL_SENT | $TOTAL_RECV | $([[ $LOSS_COUNT -eq 0 ]] && echo "✅" || echo "⚠️ Loss: $LOSS_COUNT") |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$TOTAL_RECV" -lt "$TOTAL_SENT" ] || [ "$WS_CONNS" -lt 50 ]; then
+            echo "::error::Reconciliation Failed! Data Loss or Connection Drop detected."
             exit 1
           fi
