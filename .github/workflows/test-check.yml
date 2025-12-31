@@ -1,16 +1,23 @@
-name: 50-Device API sample test check
-
-on: [push]
+name: API Verification Test
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
-  device-verification:
+  api-verification:
     runs-on: ubuntu-latest
-    environment: test
-    timeout-minutes: 15
-
+    environment: load_test
+    strategy:
+      fail-fast: false
+      matrix:
+        # 10000ms = 10 second interval
+        WS_MSG_INTERVAL: [10000] 
+    timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: uses: actions/checkout@v4
 
       - name: Create .env file and start services
         run: |
@@ -28,36 +35,76 @@ jobs:
       - name: Setup Grafana k6
         uses: grafana/setup-k6-action@v1
 
-      - name: Run Device Verification Test
-        run: k6 run tests/test-check.js --summary-export=summary.json
-
-      - name: Show Test Summary
-        run: cat summary.json
-
-      - name: Add k6 Summary to GitHub
-        run: echo "## K6 Test Summary" >> $GITHUB_STEP_SUMMARY && cat summary.json >> $GITHUB_STEP_SUMMARY
-
-      - name: Get Total Devices Count from MySQL
-        run: |
-          DEVICE_COUNT=$(docker exec -i mysql_container_name \
-            mysql -u root -p"${{ secrets.DB_ROOT_PASSWD }}" -N -s -e "SELECT COUNT(*) FROM ${{ secrets.DB_NAME }}.devices;")
-          echo "Total devices in DB: $DEVICE_COUNT"
-
-      - name: Get Total Measurements Count from MySQL
+      - name: Execute Test
+        run: k6 run tests/api-verification-test.js
         env:
-          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
-        run: |
-          TOTAL_COUNT=$(docker exec -e MYSQL_PWD=mysql mysql \
-            -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;")
-          echo "Total measurement entries in DB: $TOTAL_COUNT"
+          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
-      - name: Get Individual Device Measurement Counts
-        env:
-          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
-        run: |
-          echo "Individual device measurement counts:"
-          docker exec -e MYSQL_PWD=mysql mysql -u root -N -s -e "SELECT imei, COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log GROUP BY imei;" 
-
-      - name: Stop Docker Services
+      - name: Capture Logs for Artifacts
         if: always()
-        run: docker compose -f ./docker/v1/docker-compose.yml down -v
+        run: |
+          docker logs nodejs_app > app_logs.txt 2>&1
+          docker logs mysql > mysql_logs.txt 2>&1
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-validation-test-results-${{ matrix.WS_MSG_INTERVAL }}
+          path: |
+            summary.json
+            app_logs.txt
+            mysql_logs.txt
+
+      - name: Audit Report
+        if: always()
+        run: |
+          # Extract metrics from k6 summary
+          RETRIEVED=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
+          CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
+          WS_SENT=$(jq -r '.metrics.total_sent_msgs.values.count // 0' summary.json)
+          DB_TOTAL=$(jq -r '.metrics.total_saved_count.values.value // 0' summary.json)
+          
+          # Math: Each bundle contains 4 metric types (cellular, volume, firmware, battery)
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+
+          echo "## 📊 DEVICE & DATA AUDIT SUMMARY" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 1. Connectivity Status" >> $GITHUB_STEP_SUMMARY
+          echo "| Check Type | Actual / Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$RETRIEVED" -eq 50 ]; then
+            echo "| Device Retrieval (GET /device) | 50 / 50 | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Device Retrieval (GET /device) | $RETRIEVED / 50 | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$CONNS" -eq 50 ]; then
+            echo "| Measurement API Connectivity | 50 / 50 | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Measurement API Connectivity | $CONNS / 50 | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "---" >> $GITHUB_STEP_SUMMARY
+
+          echo "### 2. Data Integrity (10s Interval Test)" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total WS Bundles Sent** | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Expected DB Rows (Bundles x 4)** | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Actual Rows Found via API** | $DB_TOTAL |" >> $GITHUB_STEP_SUMMARY
+
+          # Check for data loss
+          if [ "$DB_TOTAL" -lt "$EXPECTED_ROWS" ]; then
+            LOSS=$(( EXPECTED_ROWS - DB_TOTAL ))
+            echo "### ❌ DATA LOSS DETECTED: $LOSS rows missing" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### ✅ NO DATA LOSS DETECTED" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Final Job Status
+          if [[ "$RETRIEVED" -ne 50 || "$CONNS" -ne 50 || "$DB_TOTAL" -lt "$EXPECTED_ROWS" ]]; then
+            echo "::error::Audit Failed: One or more checks did not meet 100% integrity."
+            exit 1
+          fi
