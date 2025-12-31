@@ -51,11 +51,12 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    console.log("--- Starting Final Audit ---");
+    console.log("--- Starting Final Test ---");
     
     // --- 1. Device Retrieval Audit ---
     const listRes = http.get("http://localhost:8883/api/v1/device", {
-        headers: { "Authorization": `${data.keys[0].api_key}` }
+        headers: { "Authorization": `${data.keys[0].api_key}` },
+        timeout:'60s'
     });
 
     const is200 = listRes.status === 200;
@@ -66,10 +67,22 @@ export function teardown(data) {
     // --- 2. Measurement Endpoint Audit ---
     let successfulConns = 0;
     data.keys.forEach((device) => {
-        const res = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`, {
-            headers: { Authorization: `${device.api_key}` }
+        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`;
+        
+        const res = http.get(url, {
+            headers: { Authorization: `${device.api_key}` },
+            timeout: '60s' // <--- 1. Tell k6 to wait up to 60 seconds for a response
         });
-        if (res.status === 200) successfulConns++;
+
+        if (res.status === 200) {
+            successfulConns++;
+        } else {
+            // This will show you in the logs why a specific device failed
+            console.log(`Audit failed for ${device.imei}: Status ${res.status}`);
+        }
+
+        // 2. Add a tiny pause so we don't overwhelm the server during the audit
+        sleep(0.1); 
     });
 
     // Send these values to the summary
