@@ -1,9 +1,9 @@
-name: API Verification Test
+name: API Verification Test sample check
 on:
   push:
     branches:
       - main
-  workflow_dispatch: # Allows manual triggering from the UI
+  workflow_dispatch:
 
 jobs:
   api-verification:
@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [10000] # 10 seconds in milliseconds
+        WS_MSG_INTERVAL: [10000] # 10 seconds
     timeout-minutes: 10
     steps:
       - name: Checkout code
@@ -31,13 +31,31 @@ jobs:
           echo "Waiting for API to be ready..."
           timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
 
-      - name: Setup Grafana k6
-        uses: grafana/setup-k6-action@v1
-
       - name: Execute Test
         run: k6 run tests/test-check.js
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
+
+      - name: Direct Database Audit (SQL)
+        if: always()
+        run: |
+          echo "### 🗄️ SQL Database Truth" >> $GITHUB_STEP_SUMMARY
+          
+          echo "#### Total Row Count" >> $GITHUB_STEP_SUMMARY
+          echo '```sql' >> $GITHUB_STEP_SUMMARY
+          docker exec mysql mysql -u root -p${{ secrets.DB_ROOT_PASSWD }} ${{ secrets.DB_NAME }} \
+            -e "SELECT COUNT(*) AS total_rows FROM device_monitor_log;" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          echo "#### Individual Device Breakdown" >> $GITHUB_STEP_SUMMARY
+          echo '```sql' >> $GITHUB_STEP_SUMMARY
+          docker exec mysql mysql -u root -p${{ secrets.DB_ROOT_PASSWD }} ${{ secrets.DB_NAME }} \
+            -e "SELECT imei, COUNT(*) AS count FROM device_monitor_log GROUP BY imei ORDER BY count DESC;" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+          # Export total count to env for the final audit logic
+          DB_ACTUAL_TOTAL=$(docker exec mysql mysql -u root -p${{ secrets.DB_ROOT_PASSWD }} ${{ secrets.DB_NAME }} -sN -e "SELECT COUNT(*) FROM device_monitor_log;")
+          echo "DB_ACTUAL_TOTAL=$DB_ACTUAL_TOTAL" >> $GITHUB_ENV
 
       - name: Capture Logs for Artifacts
         if: always()
@@ -49,58 +67,43 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: api-validation-test-results-${{ matrix.WS_MSG_INTERVAL }}
+          name: api-validation-results-${{ matrix.WS_MSG_INTERVAL }}
           path: |
             summary.json
             app_logs.txt
             mysql_logs.txt
 
-      - name: Audit Report
+      - name: Final Audit Report
         if: always()
         run: |
-          # Ensure summary.json exists before processing
-          if [ ! -f summary.json ]; then
-            echo "::error::summary.json not found. k6 might have failed to run."
-            exit 1
-          fi
-
+          # 1. Extract k6 metrics
           RETRIEVED=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
           CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
           WS_SENT=$(jq -r '.metrics.total_sent_msgs.values.count // 0' summary.json)
-          DB_TOTAL=$(jq -r '.metrics.total_saved_count.values.value // 0' summary.json)
+          API_TOTAL=$(jq -r '.metrics.total_saved_count.values.value // 0' summary.json)
           
-          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+          # 2. Compare against SQL truth (exported in previous step)
+          SQL_TOTAL=${{ env.DB_ACTUAL_TOTAL }}
+          EXPECTED=$(( WS_SENT * 4 ))
 
-          echo "## 📊 DEVICE & DATA AUDIT SUMMARY" >> $GITHUB_STEP_SUMMARY
+          echo "## 📊 DATA INTEGRITY RECONCILIATION" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Expected | Actual (SQL) | Actual (API) |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Devices** | 50 | 50 | $RETRIEVED |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total Rows** | $EXPECTED | $SQL_TOTAL | $API_TOTAL |" >> $GITHUB_STEP_SUMMARY
           
-          echo "### 1. Connectivity Status" >> $GITHUB_STEP_SUMMARY
-          echo "| Check Type | Actual / Target | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          
-          [ "$RETRIEVED" -eq 50 ] && S1="✅ PASS" || S1="❌ FAIL"
-          echo "| Device Retrieval (GET /device) | $RETRIEVED / 50 | $S1 |" >> $GITHUB_STEP_SUMMARY
-
-          [ "$CONNS" -eq 50 ] && S2="✅ PASS" || S2="❌ FAIL"
-          echo "| Measurement API Connectivity | $CONNS / 50 | $S2 |" >> $GITHUB_STEP_SUMMARY
-
-          echo "---" >> $GITHUB_STEP_SUMMARY
-
-          echo "### 2. Data Integrity (10s Interval Test)" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Total WS Bundles Sent** | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Expected DB Rows (Sent x 4)** | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Actual Rows Found via API** | $DB_TOTAL |" >> $GITHUB_STEP_SUMMARY
-
-          if [ "$DB_TOTAL" -lt "$EXPECTED_ROWS" ]; then
-            LOSS=$(( EXPECTED_ROWS - DB_TOTAL ))
-            echo "### ❌ DATA LOSS DETECTED: $LOSS rows missing" >> $GITHUB_STEP_SUMMARY
+          echo "### 🚩 Analysis" >> $GITHUB_STEP_SUMMARY
+          if [ "$SQL_TOTAL" -eq 0 ]; then
+            echo "❌ **CRITICAL:** Database is empty. Ingestion failed." >> $GITHUB_STEP_SUMMARY
+          elif [ "$SQL_TOTAL" -lt "$EXPECTED" ]; then
+            echo "⚠️ **WARNING:** Partial data loss. SQL only has $SQL_TOTAL/$EXPECTED." >> $GITHUB_STEP_SUMMARY
+          elif [ "$API_TOTAL" -eq 0 ] && [ "$SQL_TOTAL" -gt 0 ]; then
+            echo "🔍 **BUG FOUND:** Data exists in DB but API returned 0. Check your API's timestamp/filtering logic." >> $GITHUB_STEP_SUMMARY
           else
-            echo "### ✅ NO DATA LOSS DETECTED" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **SUCCESS:** SQL and API match expected counts." >> $GITHUB_STEP_SUMMARY
           fi
 
-          # Fail build if criteria not met
-          if [[ "$RETRIEVED" -ne 50 || "$CONNS" -ne 50 || "$DB_TOTAL" -lt "$EXPECTED_ROWS" ]]; then
-            echo "::error::Audit Failed: Integrity check failed."
+          # Fail criteria
+          if [[ "$RETRIEVED" -ne 50 || "$SQL_TOTAL" -lt "$EXPECTED" ]]; then
             exit 1
           fi

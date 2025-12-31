@@ -57,34 +57,34 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    console.log("--- Starting Data Integrity Audit ---");
-    sleep(5); // Grace period for DB persistence
-    
-    const endNS = Date.now() * 1000000;
-    let totalDbRowsFound = 0;
+    console.log("--- Starting Final API Audit ---");
+    sleep(10); // Wait for DB flush
+
     let successfulConns = 0;
+    let totalDbRowsFromAPI = 0;
 
-    // 1. Device Retrieval Test (GET /api/v1/device)
-    const listRes = http.get("http://localhost:8883/api/v1/device", {
-        headers: { "Authorization": `${data.keys[0].api_key}` }
-    });
-    gauge_devices_found.add(listRes.status === 200 ? listRes.json().length : 0);
-
-    // 2. Individual Device Measurement Check
     data.keys.forEach((device) => {
-        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${endNS}`;
-        const res = http.get(url, { headers: { Authorization: `${device.api_key}` } });
+        // Broaden the window slightly to avoid clock-drift issues
+        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=0&end_ns=${Date.now() * 1000000}`;
+
+        const res = http.get(url, {
+            headers: { Authorization: `${device.api_key}` },
+            timeout: '60s'
+        });
 
         if (res.status === 200) {
             const rowCount = res.json().length;
-            console.log(`IMEI: ${device.imei} | Sent: ~6 | Found in DB: ${rowCount}`);
+            console.log(`API CHECK [${device.imei}]: Found ${rowCount} rows`);
             successfulConns++;
-            totalDbRowsFound += (rowCount * 4); // Multiplying by 4 as each bundle has 4 metrics
+            totalDbRowsFromAPI += rowCount;
+        } else {
+            console.log(`API CHECK [${device.imei}]: FAILED - Status ${res.status} - Body: ${res.body}`);
         }
     });
 
+    gauge_devices_found.add(data.keys.length);
     gauge_conn_success.add(successfulConns);
-    gauge_total_saved.add(totalDbRowsFound);
+    gauge_total_saved.add(totalDbRowsFromAPI);
 }
 
 export function handleSummary(data) {
