@@ -32,7 +32,9 @@ jobs:
           timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
 
       - name: Execute Test
-        run: k6 run tests/test-check.js
+        run: |
+          # We use the full path or ensure k6 is initialized
+          k6 run tests/api-verification-test.js --summary-export=summary.json
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
