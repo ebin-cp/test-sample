@@ -3,7 +3,7 @@ on:
   push:
     branches:
       - main
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual triggering from the UI
 
 jobs:
   api-verification:
@@ -12,12 +12,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 10000ms = 10 second interval
-        WS_MSG_INTERVAL: [10000] 
+        WS_MSG_INTERVAL: [10000] # 10 seconds in milliseconds
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: uses: actions/checkout@v4
+        uses: actions/checkout@v4
 
       - name: Create .env file and start services
         run: |
@@ -36,15 +35,15 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: k6 run tests/api-verification-test.js
+        run: k6 run tests/test-check.js
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
       - name: Capture Logs for Artifacts
         if: always()
         run: |
-          docker logs nodejs_app > app_logs.txt 2>&1
-          docker logs mysql > mysql_logs.txt 2>&1
+          docker logs nodejs_app > app_logs.txt 2>&1 || true
+          docker logs mysql > mysql_logs.txt 2>&1 || true
 
       - name: Upload Artifacts
         if: always()
@@ -59,13 +58,17 @@ jobs:
       - name: Audit Report
         if: always()
         run: |
-          # Extract metrics from k6 summary
+          # Ensure summary.json exists before processing
+          if [ ! -f summary.json ]; then
+            echo "::error::summary.json not found. k6 might have failed to run."
+            exit 1
+          fi
+
           RETRIEVED=$(jq -r '.metrics.devices_found_count.values.value // 0' summary.json)
           CONNS=$(jq -r '.metrics.connections_success_count.values.value // 0' summary.json)
           WS_SENT=$(jq -r '.metrics.total_sent_msgs.values.count // 0' summary.json)
           DB_TOTAL=$(jq -r '.metrics.total_saved_count.values.value // 0' summary.json)
           
-          # Math: Each bundle contains 4 metric types (cellular, volume, firmware, battery)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
 
           echo "## 📊 DEVICE & DATA AUDIT SUMMARY" >> $GITHUB_STEP_SUMMARY
@@ -74,17 +77,11 @@ jobs:
           echo "| Check Type | Actual / Target | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           
-          if [ "$RETRIEVED" -eq 50 ]; then
-            echo "| Device Retrieval (GET /device) | 50 / 50 | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| Device Retrieval (GET /device) | $RETRIEVED / 50 | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
-          fi
+          [ "$RETRIEVED" -eq 50 ] && S1="✅ PASS" || S1="❌ FAIL"
+          echo "| Device Retrieval (GET /device) | $RETRIEVED / 50 | $S1 |" >> $GITHUB_STEP_SUMMARY
 
-          if [ "$CONNS" -eq 50 ]; then
-            echo "| Measurement API Connectivity | 50 / 50 | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| Measurement API Connectivity | $CONNS / 50 | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
-          fi
+          [ "$CONNS" -eq 50 ] && S2="✅ PASS" || S2="❌ FAIL"
+          echo "| Measurement API Connectivity | $CONNS / 50 | $S2 |" >> $GITHUB_STEP_SUMMARY
 
           echo "---" >> $GITHUB_STEP_SUMMARY
 
@@ -92,10 +89,9 @@ jobs:
           echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| **Total WS Bundles Sent** | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Expected DB Rows (Bundles x 4)** | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Expected DB Rows (Sent x 4)** | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
           echo "| **Actual Rows Found via API** | $DB_TOTAL |" >> $GITHUB_STEP_SUMMARY
 
-          # Check for data loss
           if [ "$DB_TOTAL" -lt "$EXPECTED_ROWS" ]; then
             LOSS=$(( EXPECTED_ROWS - DB_TOTAL ))
             echo "### ❌ DATA LOSS DETECTED: $LOSS rows missing" >> $GITHUB_STEP_SUMMARY
@@ -103,8 +99,8 @@ jobs:
             echo "### ✅ NO DATA LOSS DETECTED" >> $GITHUB_STEP_SUMMARY
           fi
 
-          # Final Job Status
+          # Fail build if criteria not met
           if [[ "$RETRIEVED" -ne 50 || "$CONNS" -ne 50 || "$DB_TOTAL" -lt "$EXPECTED_ROWS" ]]; then
-            echo "::error::Audit Failed: One or more checks did not meet 100% integrity."
+            echo "::error::Audit Failed: Integrity check failed."
             exit 1
           fi
