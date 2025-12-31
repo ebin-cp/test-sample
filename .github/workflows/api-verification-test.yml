@@ -17,14 +17,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create .env file
+      - name: Create .env file and start services
         run: |
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
           echo "DATABASE_HOST=mysql" >> .env
-          cp .env docker/v1/.env
-
-      - name: Start Services    
+          cp .env docker/v1/.env  
           docker compose -f ./docker/v1/docker-compose.yml up -d
 
       - name: Wait for Health Check
