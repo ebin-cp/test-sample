@@ -23,36 +23,33 @@ export function setup() {
         const payload = JSON.stringify({ imei: imei });
         const params = { headers: { "Content-Type": "application/json" } };
         
-        let res;
-        let retries = 5;
-
-        // Try to register with a small retry loop to handle 502s during boot
-        while (retries > 0) {
-            res = http.post("http://localhost:8883/api/v1/device", payload, params);
-            if (res.status === 200) break;
-            
-            console.log(`[RETRY] Device ${i+1} got ${res.status}. Retries left: ${retries}`);
-            sleep(2);
-            retries--;
-        }
+        // Log attempt
+        console.log(`[SETUP] Registering device ${i+1}/10`);
         
+        const res = http.post("http://localhost:8883/api/v1/device", payload, params);
+        
+        // --- VITAL ERROR HANDLING ---
         if (!res || res.status !== 200) {
-            console.log(`[FATAL] Registration failed after retries. Status: ${res ? res.status : 'No Res'}. Body: ${res ? res.body : ''}`);
-            fail("Setup failed - Backend unreachable via Nginx");
+            console.error(`[FATAL] Server returned ${res ? res.status : 'No response'}. Body: ${res ? res.body : 'Empty'}`);
+            // Force exit with a clear message to avoid the TypeError
+            throw new Error(`Setup failed at device ${i+1}. Check if app is connected to DB.`);
         }
 
         let d;
         try {
-            d = JSON.parse(res.body);
+            d = res.json();
         } catch (e) {
-            fail(`JSON Parse Error: ${res.body}`);
+            console.error(`[FATAL] Failed to parse JSON. Body: ${res.body}`);
+            throw new Error("Invalid JSON response from server.");
         }
 
-        if (d && d.result === "success" && d.key) {
+        // Final structure check
+        if (d && d.result === "success" && d.key && d.key.key) {
             registrationCount.add(1);
             deviceKeys.push({ api_key: d.key.key, imei: imei });
         } else {
-            fail(`Unexpected Structure: ${res.body}`);
+            console.error(`[FATAL] Missing keys in JSON: ${JSON.stringify(d)}`);
+            throw new Error("Server response missing 'key' or 'result'.");
         }
     }
 
@@ -60,10 +57,15 @@ export function setup() {
 }
 
 export default function(data) {
-    if (!data || !data.keys || !data.keys[__VU - 1]) return;
+    // Check if data was passed correctly from setup
+    if (!data || !data.keys || !data.keys[__VU - 1]) {
+        return;
+    }
+
     const myKey = data.keys[__VU - 1];
+    const url = "ws://localhost:8883/api/live";
     
-    const res = ws.connect("ws://localhost:8883/api/live", {
+    const res = ws.connect(url, {
         headers: {
             Origin: "robad.in",
             Authorization: `${myKey.imei} ${myKey.api_key}`,
@@ -84,7 +86,7 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    console.log("Teardown phase: Test finished.");
+    console.log("Load test complete. Entering teardown.");
 }
 
 export function handleSummary(data) {
