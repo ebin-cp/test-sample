@@ -104,6 +104,6 @@ export function teardown(data) {
 export function handleSummary(data) {
     return {
         "summary.json": JSON.stringify(data),
-        "stdout": JSON.stringify(data, null, 2),
+        // "stdout": JSON.stringify(data, null, 2),
     }
 }
