@@ -48,7 +48,7 @@ jobs:
         run: |
           k6 run \
             --summary-export=summary.json \
-            tests/test-create-50-devices.js
+            tests/device-create-test.js
 
       - name: Verify Device Count in Database
         env:
