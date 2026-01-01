@@ -32,7 +32,7 @@ jobs:
         run: |
           ulimit -n 4096
           # We use --logformat raw to make parsing easier
-          k6 run tests/test-check.js --logformat raw > test_output.log 2>&1 || true
+          k6 run tests/test-check.js --summary-mode full
           
           # Debug: Print logs to the GH console so you can see if they exist
           echo "--- START OF K6 LOG ---"
