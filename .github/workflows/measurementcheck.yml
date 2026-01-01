@@ -60,10 +60,13 @@ jobs:
             exit 1
           fi
 
+          # ടേബിൾ ഉണ്ടോ എന്നും ഡാറ്റ ഉണ്ടോ എന്നും ഉറപ്പാക്കുന്നു
           DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM ${DB_NAME}.device;" 2>/dev/null || echo "")
           
           if [ -z "$DEVICES" ]; then
-            echo "::error::No devices found in database or query failed."
+            echo "::error::No devices found in DB: ${DB_NAME}. Please check if the DB name and table name 'device' are correct."
+            # ഡീബഗ്ഗിംഗിനായി നിലവിലുള്ള ഡാറ്റാബേസുകൾ ലിസ്റ്റ് ചെയ്യുന്നു
+            docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -e "SHOW DATABASES;"
             exit 1
           fi
 
