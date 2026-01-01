@@ -31,10 +31,10 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for Services to be Ready
+      - name: Wait for Health Check
         run: |
-          sleep 20 
-          curl --retry 10 --retry-delay 5 --retry-all-errors http://localhost:8883/health
+          echo "Waiting for API to be ready..."
+          timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
 
       - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
