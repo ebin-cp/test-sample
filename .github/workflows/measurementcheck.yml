@@ -50,37 +50,37 @@ jobs:
             mysql_logs.txt
 
       - name: Final Validation
-  if: always()
-  env:
-    DB_PASS: "${{ secrets.DB_ROOT_PASSWD }}"
-    DB_NAME: "${{ secrets.DB_NAME }}"
-  run: |
-    # 1. Fetch total counts from Docker MySQL
-    TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device;" 2>/dev/null || echo "0")
-    TOTAL_DEVICE_MONITOR_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
-    
-    # 2. Extract metrics from k6 summary.json
-    WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-    IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
-
-    # 3. Start the GitHub Summary Report
-    echo "### 📊 Performance Test Validation" >> $GITHUB_STEP_SUMMARY
-    echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-    echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-    echo "| Total WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-    echo "| Total Devices Created | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
-    echo "| Total Logs in DB | $TOTAL_DEVICE_MONITOR_LOGS |" >> $GITHUB_STEP_SUMMARY
-    
-    echo -e "\n### 📱 Individual Device Log Breakdown" >> $GITHUB_STEP_SUMMARY
-    echo "| IMEI | Log Count | Status |" >> $GITHUB_STEP_SUMMARY
-    echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-
-    # 4. Loop through each IMEI and append rows
-    for id in $IMEI_LIST; do
-      COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "Error")
+        if: always()
+        env:
+          DB_PASS: "${{ secrets.DB_ROOT_PASSWD }}"
+          DB_NAME: "${{ secrets.DB_NAME }}"
+        run: |
+          # 1. Fetch total counts from Docker MySQL
+          TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device;" 2>/dev/null || echo "0")
+          TOTAL_DEVICE_MONITOR_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
+          
+          # 2. Extract metrics from k6 summary.json
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
       
-      # Determine status icon
-      if [ "$COUNT" -gt 0 ] 2>/dev/null; then STATUS="🟢"; else STATUS="🔴"; fi
+          # 3. Start the GitHub Summary Report
+          echo "### 📊 Performance Test Validation" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Devices Created | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Logs in DB | $TOTAL_DEVICE_MONITOR_LOGS |" >> $GITHUB_STEP_SUMMARY
+          
+          echo -e "\n### 📱 Individual Device Log Breakdown" >> $GITHUB_STEP_SUMMARY
+          echo "| IMEI | Log Count | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
       
-      echo "| \`$id\` | **$COUNT** | $STATUS |" >> $GITHUB_STEP_SUMMARY
-    done
+          # 4. Loop through each IMEI and append rows
+          for id in $IMEI_LIST; do
+            COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "Error")
+            
+            # Determine status icon
+            if [ "$COUNT" -gt 0 ] 2>/dev/null; then STATUS="🟢"; else STATUS="🔴"; fi
+            
+            echo "| \`$id\` | **$COUNT** | $STATUS |" >> $GITHUB_STEP_SUMMARY
+          done
