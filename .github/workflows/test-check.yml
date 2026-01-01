@@ -37,7 +37,7 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: k6 run tests/load-test.js --summary-mode full
+        run: k6 run tests/test-check.js --summary-mode full
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
