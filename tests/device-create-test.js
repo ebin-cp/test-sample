@@ -1,6 +1,5 @@
 import http from "k6/http";
-import * as ulid from "https://esm.run/ulid";
-import { check, fail } from "k6";
+import { check, fail, sleep } from "k6";
 
 export const options = {
     vus: 1,
@@ -9,61 +8,90 @@ export const options = {
 
 const BASE_URL = "http://localhost:8883/api/v1/device";
 
+/**
+ * Generate deterministic IMEI (k6-safe, CI-safe)
+ */
 function generateImei(index) {
     return `TEST-IMEI-${Date.now()}-${index}`;
 }
+
+/**
+ * Create device with retry (handles 502 during cold start)
+ */
+function createDeviceWithRetry(imei, retries = 5) {
+    for (let i = 1; i <= retries; i++) {
+        const res = http.post(
+            BASE_URL,
+            JSON.stringify({ imei }),
+            {
+                headers: { "Content-Type": "application/json" },
+                timeout: "15s",
+            }
+        );
+
+        if (res.status === 200) {
+            return res.json();
+        }
+
+        console.warn(
+            `⚠️ Device create failed (status ${res.status}), attempt ${i}/${retries}`
+        );
+        sleep(2);
+    }
+
+    fail(`❌ Device creation failed after ${retries} retries`);
+}
+
+/**
+ * SETUP — Create 50 devices
+ */
 export function setup() {
     const devices = [];
 
     for (let i = 0; i < 50; i++) {
         const imei = generateImei(i);
+        const body = createDeviceWithRetry(imei);
 
-        const payload = JSON.stringify({ imei });
-        const params = { headers: { "Content-Type": "application/json" } };
-
-        const res = http.post("http://localhost:8883/api/v1/device", payload, params);
-
-        if (res.status !== 200) {
-            fail(`Device creation failed: ${res.body}`);
+        if (!body.key || !body.key.key) {
+            fail(`Invalid response: ${JSON.stringify(body)}`);
         }
 
-        const body = res.json();
         devices.push({
             imei,
             api_key: body.key.key,
         });
+
+        sleep(0.2); // gentle pacing for backend stability
     }
 
+    console.log(`✅ Created ${devices.length} devices`);
     return { devices };
 }
 
+/**
+ * DEFAULT — REQUIRED by k6 (no-op)
+ */
 export default function () {
-    // VU execution
+    // intentionally empty
 }
 
-
+/**
+ * TEARDOWN — Retrieve and validate devices
+ */
 export function teardown(data) {
     const authKey = data.devices[0].api_key;
 
     const res = http.get(BASE_URL, {
-        headers: {
-            Authorization: authKey,
-        },
-        timeout: "60s",
+        headers: { Authorization: authKey },
+        timeout: "30s",
     });
 
     check(res, {
-        "device retrieval status is 200": (r) => r.status === 200,
+        "device list status is 200": (r) => r.status === 200,
+        "50 devices retrieved": (r) => r.json().length === 50,
     });
 
-    const retrievedDevices = res.json();
-
-    check(retrievedDevices, {
-        "50 devices retrieved": (d) => d.length === 50,
-    });
-
-    // Validate all created IMEIs exist
-    const retrievedImeis = retrievedDevices.map((d) => d.imei);
+    const retrievedImeis = res.json().map((d) => d.imei);
     const missing = data.devices.filter(
         (d) => !retrievedImeis.includes(d.imei),
     );

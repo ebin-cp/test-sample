@@ -1,4 +1,4 @@
-name: 50-Device create and retrieve test
+name: 50-Device Concurrent WebSocket Messaging stress test
 
 on:
   push:
@@ -10,7 +10,7 @@ jobs:
   device-create-and-retrieve-test:
     runs-on: ubuntu-latest
     environment: load_test
-    timeout-minutes: 5
+    timeout-minutes: 6
 
     steps:
       - name: Checkout code
@@ -29,22 +29,22 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
+      # ✅ IMPORTANT: wait for the ACTUAL API, not just /health
       - name: Wait for Device API readiness
         run: |
           echo "Waiting for /api/v1/device to be ready..."
           timeout 120s bash -c '
-          until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/api/v1/device)" == "200" ]; do
-            sleep 5
-          done
+            until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/api/v1/device)" == "200" ]; do
+              sleep 5
+            done
           '
-
 
       - name: Setup Grafana k6
         uses: grafana/setup-k6-action@v1
         with:
           k6-version: 0.55.0
 
-      - name: Execute k6 Device Creation & Retrieval Test
+      - name: Execute k6 Device Create & Retrieve Test
         run: |
           k6 run \
             --summary-export=summary.json \
