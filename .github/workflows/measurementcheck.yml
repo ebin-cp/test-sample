@@ -52,43 +52,58 @@ jobs:
       - name: Final Validation
         if: always()
         env:
-          DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
-          DB_NAME: "${{secrets.DB_NAME}}"
+          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
+          DB_NAME: "${{ secrets.DB_NAME }}"
         run: |
-          # 1. Fetch total device count
-          TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{env.DB_PASS}} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.device;" 2>/dev/null || echo "50")
+          DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM $DB_NAME.device;" 2>/dev/null)
+          RETRIEVED_DEVICES=$(echo "$DEVICES" | wc -l)
 
-          # 2. Extract check counts from summary.json 
-          # This looks for any check containing "Data Exists" and extracts the 'passes' count
-          echo "" > counts.txt
-          jq -r '.metrics | to_entries[] | select(.key | contains("Data Exists")) | .value.values.passes' summary.json >> counts.txt
+          echo "" > individual_report.txt
+          DEVICE_IDX=0
+          DEVICES_WITH_4_TYPES=0
 
-          # 3. Create the grouped report
-          # We use a temporary file to handle the multiline output correctly for GitHub Summary
-          echo "| No. of Devices | Success Checks per Device |" > grouped_table.txt
-          echo "| :--- | :--- |" >> grouped_table.txt
-          sort -n counts.txt | uniq -c | awk '{print "| " $1 " | " $2 " |"}' >> grouped_table.txt
+          while read -r imei; do
+            if [ -z "$imei" ]; then continue; fi
+            
+            TOTAL_MEAS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM $DB_NAME.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+            
+            UNIQUE_TYPES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(DISTINCT measurement_type) FROM $DB_NAME.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+            
+            if [ "$UNIQUE_TYPES" -eq 4 ]; then
+              DEVICES_WITH_4_TYPES=$((DEVICES_WITH_4_TYPES + 1))
+            fi
 
-          # 4. Database row consistency check
+            echo "| Device $DEVICE_IDX | $UNIQUE_TYPES | $TOTAL_MEAS |" >> individual_report.txt
+            DEVICE_IDX=$((DEVICE_IDX + 1))
+          done <<< "$DEVICES"
+
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
-          ACTUAL_ROWS=$(docker exec mysql mysql -u root -p${{env.DB_PASS}} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.device_monitor_log;" || echo "0")
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM $DB_NAME.device_monitor_log;" 2>/dev/null || echo "0")
 
-          # 5. Generate GitHub Job Summary Report
           echo "### 📊 Data Distribution Report" >> $GITHUB_STEP_SUMMARY
-          cat grouped_table.txt >> $GITHUB_STEP_SUMMARY
+          echo "| Description | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| No. of devices retrieved | $RETRIEVED_DEVICES |" >> $GITHUB_STEP_SUMMARY
+          echo "| No. of devices with 4 measurements | $DEVICES_WITH_4_TYPES |" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🗄️ Database Consistency Check" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Count | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total WS Messages Sent | $WS_SENT | ✅ |" >> $GITHUB_STEP_SUMMARY
-          echo "| Expected Rows in DB | $EXPECTED_ROWS | - |" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "$ACTUAL_ROWS" -ge "$EXPECTED_ROWS" ]; then
-            echo "| Actual Rows in DB | $ACTUAL_ROWS | ✅ |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| Actual Rows in DB | $ACTUAL_ROWS | ❌ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Total Rows (Sum of all devices) | $EXPECTED_ROWS | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total measurements in DB | $ACTUAL_ROWS | $([[ "$ACTUAL_ROWS" -ge "$EXPECTED_ROWS" ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Individual Device Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Click to view measurements for each of the $RETRIEVED_DEVICES devices</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Device ID | Measurement Types | Total Individual Measurements |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          cat individual_report.txt >> $GITHUB_STEP_SUMMARY
+          echo "</details>" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]; then
             echo "::error::Data Mismatch! Expected $EXPECTED_ROWS, found $ACTUAL_ROWS."
             exit 1
           fi
