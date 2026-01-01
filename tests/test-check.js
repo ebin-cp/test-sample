@@ -2,7 +2,7 @@ import http from 'k6/http';
 import ws from 'k6/ws';
 import { check, fail } from 'k6';
 import { Counter } from 'k6/metrics';
-import { ulid } from 'https://jslib.k6.io/ulid/1.2.0/index.js';
+import { ulid } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
 
 const registrationCount = new Counter('registrations');
 const ws_metrics_sent_msgs = new Counter('ws_msgs_sent');
