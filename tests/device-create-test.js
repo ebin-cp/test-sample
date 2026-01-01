@@ -37,6 +37,11 @@ export function setup() {
     return { devices };
 }
 
+export default function () {
+    // VU execution
+}
+
+
 export function teardown(data) {
     const authKey = data.devices[0].api_key;
 
