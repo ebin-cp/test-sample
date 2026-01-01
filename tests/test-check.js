@@ -57,3 +57,7 @@ export function teardown(data) {
         console.log(`MEASURE_CHECK_MARKER|${imei}|${mRes.status}|${mData.length}`);
     }
 }
+
+export function handleSummary(data) {
+    return { "summary.json": JSON.stringify(data) };
+}
