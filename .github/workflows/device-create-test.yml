@@ -1,0 +1,71 @@
+name: 50-Device create and retrieve test
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  device-create-and-retrieve-test:
+    runs-on: ubuntu-latest
+    environment: load_test
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: |
+          echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
+          echo "DATABASE_USER=${{ secrets.DB_USER }}" >> .env
+          echo "DATABASE_USER_PASSWORD=${{ secrets.DB_USER_PASSWD }}" >> .env
+          echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
+          echo "DATABASE_HOST=${{ secrets.DB_HOST }}" >> .env
+          echo "DATABASE_PORT=${{ secrets.DB_PORT }}" >> .env
+          mv .env docker/v1/
+
+      - name: Start Services
+        run: docker compose -f ./docker/v1/docker-compose.yml up -d
+
+      - name: Wait for Health Check
+        run: |
+          echo "Waiting for API to be ready..."
+          timeout 60s bash -c '
+            until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] \
+            || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do
+              sleep 5
+            done
+          '
+
+      - name: Setup Grafana k6
+        uses: grafana/setup-k6-action@v1
+        with:
+          k6-version: 0.55.0
+
+      - name: Execute k6 Device Creation & Retrieval Test
+        run: |
+          k6 run \
+            --summary-export=summary.json \
+            tests/test-create-50-devices.js
+
+      - name: Verify Device Count in Database
+        env:
+          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
+        run: |
+          COUNT=$(docker exec -e MYSQL_PWD mysql mysql \
+            -u root \
+            -N -s \
+            -e "SELECT COUNT(*) FROM ${{ secrets.DB_NAME }}.devices;")
+
+          echo "Devices in DB: $COUNT"
+
+          if [ "$COUNT" -lt 50 ]; then
+            echo "::error::Expected at least 50 devices, found $COUNT"
+            exit 1
+          fi
+
+      - name: Stop Services
+        if: always()
+        run: docker compose -f ./docker/v1/docker-compose.yml down -v
