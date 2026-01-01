@@ -74,7 +74,7 @@ export default function(data) {
         socket.on("open", () => {
             socket.setInterval(() => {
                 const time_str = Date.now() * 1000000;
-                const msg = `volume,imei=${myKey.imei} nodeAddress="0x01,0x02,0x03",mask="0x20",sensorValue=6,volume=100.0 ${time_str}`;
+                const msg = `volume,imei=${myKey.imei} nodeAddress=\"0x01,0x02,0x03\",mask=\"0x20\",sensorValue=6,volume=100.0 ${time_str}`;
                 socket.send(msg);
                 ws_metrics_sent_msgs.add(1);
             }, ws_msg_interval);
