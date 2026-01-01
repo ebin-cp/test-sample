@@ -29,12 +29,11 @@ jobs:
       - name: Start Services
         run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      # ✅ IMPORTANT: wait for the ACTUAL API, not just /health
       - name: Wait for Device API readiness
         run: |
           echo "Waiting for /api/v1/device to be ready..."
           timeout 120s bash -c '
-            until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/api/v1/device)" == "200" ]; do
+            until [[ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/api/v1/device)" =~ ^(200|401|403)$ ]]; do
               sleep 5
             done
           '
