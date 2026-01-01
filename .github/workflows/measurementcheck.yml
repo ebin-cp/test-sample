@@ -1,0 +1,89 @@
+name: Load Test with API validation
+
+on: [push]
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    environment: load_test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start Services
+        run: |
+          echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
+          echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
+          echo "DATABASE_HOST=mysql" >> .env
+
+          cp .env docker/v1/.env
+          docker compose -f ./docker/v1/docker-compose.yml up -d
+
+      - name: Wait for Health Check
+        run: |
+          echo "Waiting for API to be ready..."
+          timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do sleep 5; done'
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Execute Test
+        run: k6 run tests/measurement-check-test.js
+        env:
+          WS_MSG_INTERVAL: 1000
+
+      - name: Capture Logs for Artifacts
+        if: always()
+        run: |
+          docker logs nodejs_app > app_logs.txt 2>&1
+          docker logs mysql > mysql_logs.txt 2>&1
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: |
+            summary.json
+            app_logs.txt
+            mysql_logs.txt
+
+      - name: Final Validation
+        if: always()
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+        run: |
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || echo "0")
+
+          echo "### 📊 Load Test Overall Metrics" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Devices | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Data Points | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actual DB Rows | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 Individual Device Measurement Check" >> $GITHUB_STEP_SUMMARY
+          echo "| Check Name | Status | Fails |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+
+          jq -r '.metrics | to_entries[] | select(.key | contains("Data Exists")) | .key' summary.json | while read -r CHECK_NAME; do
+            FAILS=$(jq -r ".metrics[\"$CHECK_NAME\"].values.fails" summary.json)
+            if [ "$FAILS" -eq "0" ]; then
+              STATUS="✅ Passed"
+            else
+              STATUS="❌ Failed"
+            fi
+            echo "| $CHECK_NAME | $STATUS | $FAILS |" >> $GITHUB_STEP_SUMMARY
+          done
+
+          # 4. Job Failure Logic
+          TOTAL_FAILS=$(jq '.metrics.checks.values.fails // 0' summary.json)
+          if [[ "$TOTAL_FAILS" -gt 0 || "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
+            echo "::error::Validation Failed! Check the summary table for details."
+            exit 1
+          fi
