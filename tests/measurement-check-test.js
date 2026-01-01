@@ -13,7 +13,6 @@ export const options = {
 };
 
 export function setup() {
-    // ടെസ്റ്റ് തുടങ്ങുന്ന സമയം setup-ൽ നിശ്ചയിക്കുന്നു
     const startTimeNS = Date.now() * 1000000;
     const deviceKeys = [];
     
@@ -70,7 +69,6 @@ export default function(data) {
 export function teardown(data) {
     const bufferNS = 5000 * 1000000; 
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
-    // setup-ൽ നിന്നുള്ള startTimeNS ഉപയോഗിക്കുന്നു
     const adjustedStartNS = data.startTimeNS - bufferNS;
 
     const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
@@ -89,7 +87,6 @@ export function teardown(data) {
             const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=${metric}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
             const measRes = http.get(measUrl, params);
 
-            // Response 200 ആണോ എന്ന് ആദ്യം നോക്കുന്നു, പിന്നെ മാത്രം JSON പാർസ് ചെയ്യുന്നു
             const success = measRes.status === 200;
             const hasData = success && measRes.json() && measRes.json().length > 0;
 

@@ -55,20 +55,19 @@ jobs:
           DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
           DB_NAME: "${{secrets.DB_NAME}}"
         run: |
-          # 1. Fetch total device count from Database
+          # 1. Fetch total device count
           TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{env.DB_PASS}} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.device;" 2>/dev/null || echo "50")
 
-          # 2. Calculate total measurement count for each device
+          # 2. Extract check counts from summary.json 
+          # This looks for any check containing "Data Exists" and extracts the 'passes' count
           echo "" > counts.txt
-          LIMIT=$((TOTAL_DEVICES - 1))
-          for i in $(seq 0 $LIMIT)
-          do
-            COUNT=$(jq "[.metrics | to_entries[] | select(.key | contains(\"(Device $i)\")) | .value.values.count // 0] | add" summary.json)
-            echo $COUNT >> counts.txt
-          done
+          jq -r '.metrics | to_entries[] | select(.key | contains("Data Exists")) | .value.values.passes' summary.json >> counts.txt
 
-          # 3. Group devices with similar data counts
-          GROUPED_REPORT=$(sort -n counts.txt | uniq -c | awk '{print "| " $1 " Devices | " $2 " Data Points per device |"}')
+          # 3. Create the grouped report
+          # We use a temporary file to handle the multiline output correctly for GitHub Summary
+          echo "| No. of Devices | Success Checks per Device |" > grouped_table.txt
+          echo "| :--- | :--- |" >> grouped_table.txt
+          sort -n counts.txt | uniq -c | awk '{print "| " $1 " | " $2 " |"}' >> grouped_table.txt
 
           # 4. Database row consistency check
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
@@ -77,11 +76,7 @@ jobs:
 
           # 5. Generate GitHub Job Summary Report
           echo "### 📊 Data Distribution Report" >> $GITHUB_STEP_SUMMARY
-          echo "This report shows the distribution of data points received per device:" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| No. of Devices | Data Count per Device |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "$GROUPED_REPORT" >> $GITHUB_STEP_SUMMARY
+          cat grouped_table.txt >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🗄️ Database Consistency Check" >> $GITHUB_STEP_SUMMARY
@@ -89,10 +84,11 @@ jobs:
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| Total WS Messages Sent | $WS_SENT | ✅ |" >> $GITHUB_STEP_SUMMARY
           echo "| Expected Rows in DB | $EXPECTED_ROWS | - |" >> $GITHUB_STEP_SUMMARY
-          echo "| Actual Rows in DB | $ACTUAL_ROWS | $([[ $ACTUAL_ROWS -ge $EXPECTED_ROWS ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-
-          # 6. Exit logic based on data integrity
-          if [[ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
+          
+          if [ "$ACTUAL_ROWS" -ge "$EXPECTED_ROWS" ]; then
+            echo "| Actual Rows in DB | $ACTUAL_ROWS | ✅ |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Actual Rows in DB | $ACTUAL_ROWS | ❌ |" >> $GITHUB_STEP_SUMMARY
             echo "::error::Data Mismatch! Expected $EXPECTED_ROWS, found $ACTUAL_ROWS."
             exit 1
           fi
