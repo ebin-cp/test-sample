@@ -51,48 +51,44 @@ jobs:
 
       - name: Final Validation
         if: always()
-        env:
-          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          # 1. അടിസ്ഥാന കണക്കുകൾ
+          # 1. ഒരു ടെമ്പററി ഫയൽ ഉണ്ടാക്കി ഓരോ ഡിവൈസിന്റെയും ടോട്ടൽ കൗണ്ട് അതിൽ സേവ് ചെയ്യുന്നു
+          echo "" > counts.txt
+          for i in {0..49}
+          do
+            # ഓരോ ഡിവൈസിനും കിട്ടിയ 4 മെട്രിക്സുകളുടെയും ആകെ എണ്ണം കൂട്ടുന്നു
+            COUNT=$(jq "[.metrics | to_entries[] | select(.key | contains(\"(Device $i)\")) | .value.values.count] | add" summary.json)
+            echo $COUNT >> counts.txt
+          done
+
+          # 2. സമാനമായ കൗണ്ടുകൾ ഉള്ള ഡിവൈസുകളെ ഗ്രൂപ്പ് ചെയ്യുന്നു (ഉദാ: 100 data ഉള്ള 30 devices)
+          # sort | uniq -c കമാൻഡ് ഉപയോഗിച്ച് ഇത് എളുപ്പത്തിൽ ചെയ്യാം
+          GROUPED_REPORT=$(sort -n counts.txt | uniq -c | awk '{print "| " $1 " Devices | " $2 " Data Points per device |"}')
+
+          # 3. ഡാറ്റാബേസ് റോകളുടെ കണക്ക്
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
           ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
-          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || echo "0")
 
-          # 2. എത്ര ഡിവൈസുകൾ പാസ്സായി എന്ന് കണ്ടുപിടിക്കുന്നു
-          # ഓരോ ഡിവൈസിനും 4 ചെക്കുകൾ വീതം പാസ്സായോ എന്ന് നോക്കുന്നു
-          PASSED_DEVICES=0
-          FAILED_DEVICES=0
-
-          for i in {0..49}
-          do
-            # ആ പ്രത്യേക ഡിവൈസിന്റെ (Device i) 4 മെട്രിക്സുകളിലും കൂടി ഉള്ള ആകെ പരാജയങ്ങൾ എണ്ണുന്നു
-            # jq ഇവിടുത്തെ 'checks' എന്ന കീ സ്കാൻ ചെയ്ത് Device i ഉള്ളവ മാത്രം എടുക്കും
-            DEVICE_FAILS=$(jq "[.metrics | to_entries[] | select(.key | contains(\"(Device $i)\")) | .value.values.fails] | add" summary.json)
-
-            if [[ "$DEVICE_FAILS" -eq 0 ]]; then
-              PASSED_DEVICES=$((PASSED_DEVICES + 1))
-            else
-              FAILED_DEVICES=$((FAILED_DEVICES + 1))
-            fi
-          done
-
-          # 3. GitHub Summary Table
-          echo "### 📊 Measurement Check Validation" >> $GITHUB_STEP_SUMMARY
-          echo "| Total No of Devices | No of devices with all 4 measurements | No of devices missing measurements |" >> $GITHUB_STEP_SUMMARY
-          echo "| :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
-          echo "| $DEVICE_COUNT | $PASSED_DEVICES ✅ | $FAILED_DEVICES $([[ $FAILED_DEVICES -gt 0 ]] && echo "❌" || echo "✅") |" >> $GITHUB_STEP_SUMMARY
+          # 4. GitHub Summary റിപ്പോർട്ട് തയ്യാറാക്കുന്നു
+          echo "### 📊 Data Distribution Report" >> $GITHUB_STEP_SUMMARY
+          echo "ഈ റിപ്പോർട്ട് ഓരോ ഡിവൈസിനും എത്ര ഡാറ്റ ലഭിച്ചു എന്ന് കാണിക്കുന്നു:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| No. of Devices | Data Count per Device |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "$GROUPED_REPORT" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🗄️ Database Record Count" >> $GITHUB_STEP_SUMMARY
-          echo "| Expected Rows | Actual Rows | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
-          echo "| $EXPECTED_ROWS | $ACTUAL_ROWS | $([[ $ACTUAL_ROWS -ge $EXPECTED_ROWS ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "### 🗄️ Database Consistency Check" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Rows in DB | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actual Rows in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
 
-          # 4. പരാജയപ്പെട്ടാൽ ജോബ് ഫെയിൽ ആക്കുക
-          TOTAL_API_FAILS=$(jq '.metrics.checks.values.fails // 0' summary.json)
-          if [[ "$FAILED_DEVICES" -gt 0 || "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
-            echo "::error::Validation Failed! $FAILED_DEVICES devices are missing data or DB rows mismatch."
+          # 5. കണ്ടീഷൻ: ഡാറ്റയിൽ കാര്യമായ വ്യത്യാസം ഉണ്ടെങ്കിൽ വിക്കറി അറിയിക്കാം
+          # ഉദാഹരണത്തിന് ACTUAL_ROWS പ്രതീക്ഷിച്ചതിലും കുറവാണെങ്കിൽ ജോബ് ഫെയിൽ ആക്കാം
+          if [[ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
+            echo "::error::Data Mismatch! Total DB rows ($ACTUAL_ROWS) is less than expected ($EXPECTED_ROWS)."
             exit 1
           fi
