@@ -53,20 +53,27 @@ jobs:
         if: always()
         env:
           MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
-          DB_NAME: "${{ secrets.DB_NAME }}"
         run: |
           if ! docker ps | grep -q mysql; then
             echo "::error::MySQL container is not running!"
             exit 1
           fi
 
-          # ടേബിൾ ഉണ്ടോ എന്നും ഡാറ്റ ഉണ്ടോ എന്നും ഉറപ്പാക്കുന്നു
-          DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM ${DB_NAME}.device;" 2>/dev/null || echo "")
+          # ഓട്ടോമാറ്റിക് ആയി യൂസർ ക്രിയേറ്റ് ചെയ്ത ഡാറ്റാബേസ് കണ്ടെത്തുന്നു
+          DETECTED_DB=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SHOW DATABASES WHERE \`Database\` NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys');" 2>/dev/null | head -n 1)
+
+          if [ -z "$DETECTED_DB" ]; then
+            echo "::error::No user database found in MySQL!"
+            docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -e "SHOW DATABASES;"
+            exit 1
+          fi
+
+          echo "Detected Database: $DETECTED_DB"
+
+          DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM ${DETECTED_DB}.device;" 2>/dev/null || echo "")
           
           if [ -z "$DEVICES" ]; then
-            echo "::error::No devices found in DB: ${DB_NAME}. Please check if the DB name and table name 'device' are correct."
-            # ഡീബഗ്ഗിംഗിനായി നിലവിലുള്ള ഡാറ്റാബേസുകൾ ലിസ്റ്റ് ചെയ്യുന്നു
-            docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -e "SHOW DATABASES;"
+            echo "::error::No devices found in table 'device' of database: $DETECTED_DB"
             exit 1
           fi
 
@@ -78,8 +85,8 @@ jobs:
           while read -r imei; do
             if [ -z "$imei" ]; then continue; fi
             
-            TOTAL_MEAS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
-            UNIQUE_TYPES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(DISTINCT measurement_type) FROM ${DB_NAME}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+            TOTAL_MEAS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DETECTED_DB}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+            UNIQUE_TYPES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(DISTINCT measurement_type) FROM ${DETECTED_DB}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
             
             if [ "$UNIQUE_TYPES" -eq 4 ]; then
               DEVICES_WITH_4_TYPES=$((DEVICES_WITH_4_TYPES + 1))
@@ -91,7 +98,7 @@ jobs:
 
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
-          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log;" 2>/dev/null || echo "0")
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DETECTED_DB}.device_monitor_log;" 2>/dev/null || echo "0")
 
           echo "### 📊 Data Distribution Report" >> $GITHUB_STEP_SUMMARY
           echo "| Description | Count |" >> $GITHUB_STEP_SUMMARY
