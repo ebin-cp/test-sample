@@ -55,9 +55,19 @@ jobs:
           MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
           DB_NAME: "${{ secrets.DB_NAME }}"
         run: |
-          DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM $DB_NAME.device;" 2>/dev/null)
-          RETRIEVED_DEVICES=$(echo "$DEVICES" | wc -l)
+          if ! docker ps | grep -q mysql; then
+            echo "::error::MySQL container is not running!"
+            exit 1
+          fi
 
+          DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM ${DB_NAME}.device;" 2>/dev/null || echo "")
+          
+          if [ -z "$DEVICES" ]; then
+            echo "::error::No devices found in database or query failed."
+            exit 1
+          fi
+
+          RETRIEVED_DEVICES=$(echo "$DEVICES" | wc -l)
           echo "" > individual_report.txt
           DEVICE_IDX=0
           DEVICES_WITH_4_TYPES=0
@@ -65,9 +75,8 @@ jobs:
           while read -r imei; do
             if [ -z "$imei" ]; then continue; fi
             
-            TOTAL_MEAS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM $DB_NAME.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
-            
-            UNIQUE_TYPES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(DISTINCT measurement_type) FROM $DB_NAME.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+            TOTAL_MEAS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+            UNIQUE_TYPES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(DISTINCT measurement_type) FROM ${DB_NAME}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
             
             if [ "$UNIQUE_TYPES" -eq 4 ]; then
               DEVICES_WITH_4_TYPES=$((DEVICES_WITH_4_TYPES + 1))
@@ -79,7 +88,7 @@ jobs:
 
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
-          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM $DB_NAME.device_monitor_log;" 2>/dev/null || echo "0")
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log;" 2>/dev/null || echo "0")
 
           echo "### 📊 Data Distribution Report" >> $GITHUB_STEP_SUMMARY
           echo "| Description | Count |" >> $GITHUB_STEP_SUMMARY
@@ -96,7 +105,7 @@ jobs:
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🔍 Individual Device Metrics" >> $GITHUB_STEP_SUMMARY
-          echo "<details><summary>Click to view measurements for each of the $RETRIEVED_DEVICES devices</summary>" >> $GITHUB_STEP_SUMMARY
+          echo "<details><summary>Click to view measurements for each device</summary>" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Device ID | Measurement Types | Total Individual Measurements |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
@@ -104,6 +113,5 @@ jobs:
           echo "</details>" >> $GITHUB_STEP_SUMMARY
 
           if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]; then
-            echo "::error::Data Mismatch! Expected $EXPECTED_ROWS, found $ACTUAL_ROWS."
             exit 1
           fi
