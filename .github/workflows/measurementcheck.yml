@@ -54,15 +54,23 @@ jobs:
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          TOTAL_DEVICES=$(jq '.metrics.keys_count.values.count // 50' summary.json) # അല്ലെങ്കിൽ നേരിട്ട് 50 എന്ന് നൽകാം
-                    
+          # 1. അടിസ്ഥാന കണക്കുകൾ
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || echo "0")
+
+          # 2. എത്ര ഡിവൈസുകൾ പാസ്സായി എന്ന് കണ്ടുപിടിക്കുന്നു
+          # ഓരോ ഡിവൈസിനും 4 ചെക്കുകൾ വീതം പാസ്സായോ എന്ന് നോക്കുന്നു
           PASSED_DEVICES=0
           FAILED_DEVICES=0
 
           for i in {0..49}
           do
-            DEVICE_FAILS=$(jq "[.metrics[] | select(.name | contains(\"(Device $i)\")) | .fails] | add" summary.json)
-            
+            # ആ പ്രത്യേക ഡിവൈസിന്റെ (Device i) 4 മെട്രിക്സുകളിലും കൂടി ഉള്ള ആകെ പരാജയങ്ങൾ എണ്ണുന്നു
+            # jq ഇവിടുത്തെ 'checks' എന്ന കീ സ്കാൻ ചെയ്ത് Device i ഉള്ളവ മാത്രം എടുക്കും
+            DEVICE_FAILS=$(jq "[.metrics | to_entries[] | select(.key | contains(\"(Device $i)\")) | .value.values.fails] | add" summary.json)
+
             if [[ "$DEVICE_FAILS" -eq 0 ]]; then
               PASSED_DEVICES=$((PASSED_DEVICES + 1))
             else
@@ -74,12 +82,17 @@ jobs:
           echo "### 📊 Measurement Check Validation" >> $GITHUB_STEP_SUMMARY
           echo "| Total No of Devices | No of devices with all 4 measurements | No of devices missing measurements |" >> $GITHUB_STEP_SUMMARY
           echo "| :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
-          echo "| $TOTAL_DEVICES | $PASSED_DEVICES ✅ | $FAILED_DEVICES $([[ $FAILED_DEVICES -gt 0 ]] && echo "❌" || echo "✅") |" >> $GITHUB_STEP_SUMMARY
+          echo "| $DEVICE_COUNT | $PASSED_DEVICES ✅ | $FAILED_DEVICES $([[ $FAILED_DEVICES -gt 0 ]] && echo "❌" || echo "✅") |" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "> **Note:** Detailed per-device data is available in the raw \`summary.json\` artifact." >> $GITHUB_STEP_SUMMARY
+          echo "### 🗄️ Database Record Count" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Rows | Actual Rows | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
+          echo "| $EXPECTED_ROWS | $ACTUAL_ROWS | $([[ $ACTUAL_ROWS -ge $EXPECTED_ROWS ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
 
-          if [[ "$FAILED_DEVICES" -gt 0 ]]; then
-            echo "::error::Some devices are missing measurements!"
+          # 4. പരാജയപ്പെട്ടാൽ ജോബ് ഫെയിൽ ആക്കുക
+          TOTAL_API_FAILS=$(jq '.metrics.checks.values.fails // 0' summary.json)
+          if [[ "$FAILED_DEVICES" -gt 0 || "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
+            echo "::error::Validation Failed! $FAILED_DEVICES devices are missing data or DB rows mismatch."
             exit 1
           fi
