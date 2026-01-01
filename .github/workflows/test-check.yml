@@ -42,7 +42,7 @@ jobs:
           k6-version: 0.55.0
 
       - name: Execute Test
-        run: k6 run tests/test-check.js --summary-mode full
+        run: k6 run --summary-export=summary.json tests/test-check.js
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
