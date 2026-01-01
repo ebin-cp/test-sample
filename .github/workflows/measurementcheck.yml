@@ -49,7 +49,7 @@ jobs:
             app_logs.txt
             mysql_logs.txt
 
-     - name: Final Validation
+      - name: Final Validation
         if: always()
         env:
           DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
