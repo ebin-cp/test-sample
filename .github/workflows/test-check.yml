@@ -33,8 +33,8 @@ jobs:
 
       - name: Wait for Services to be Ready
         run: |
-          sleep 10 
-          curl --retry 5 --retry-connrefused http://localhost:8883/health
+          sleep 20 
+          curl --retry 10 --retry-delay 5 --retry-all-errors http://localhost:8883/health
 
       - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1

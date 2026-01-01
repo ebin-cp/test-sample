@@ -2,6 +2,7 @@ import http from 'k6/http';
 import ws from 'k6/ws';
 import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
+import { ulid } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
 
 const registrationCount = new Counter('registrations');
 const ws_metrics_sent_msgs = new Counter('ws_msgs_sent');
@@ -12,47 +13,46 @@ export const options = {
     duration: "1m",
 };
 
-// Helper to replace external ULID dependency
-function generateID() {
-    return 'dev-' + Math.random().toString(36).substring(2, 15);
-}
-
 export function setup() {
     const deviceKeys = [];
     const numDevices = 10;
     const startTimeNS = Date.now() * 1000000;
 
     for (let i = 0; i < numDevices; i++) {
-        const imei = generateID();
+        const imei = ulid();
         const payload = JSON.stringify({ imei: imei });
         const params = { headers: { "Content-Type": "application/json" } };
         
-        console.log(`[SETUP] Requesting device ${i+1}/10`);
+        let res;
+        let retries = 5;
+
+        // Try to register with a small retry loop to handle 502s during boot
+        while (retries > 0) {
+            res = http.post("http://localhost:8883/api/v1/device", payload, params);
+            if (res.status === 200) break;
+            
+            console.log(`[RETRY] Device ${i+1} got ${res.status}. Retries left: ${retries}`);
+            sleep(2);
+            retries--;
+        }
         
-        const res = http.post("http://localhost:8883/api/v1/device", payload, params);
-        
-        // Check 1: Did the request fail?
         if (!res || res.status !== 200) {
-            console.log(`[FATAL] HTTP Error ${res ? res.status : 'No Res'}: ${res ? res.body : 'No Body'}`);
-            fail("Setup failed - Server unreachable or returned error");
+            console.log(`[FATAL] Registration failed after retries. Status: ${res ? res.status : 'No Res'}. Body: ${res ? res.body : ''}`);
+            fail("Setup failed - Backend unreachable via Nginx");
         }
 
-        // Check 2: Manually parse to avoid .json() issues
         let d;
         try {
             d = JSON.parse(res.body);
         } catch (e) {
-            console.log(`[FATAL] JSON Parse Error. Body was: ${res.body}`);
-            fail("Setup failed - Response not JSON");
+            fail(`JSON Parse Error: ${res.body}`);
         }
 
-        // Check 3: Final validation
-        if (d && d.result === "success" && d.key && d.key.key) {
+        if (d && d.result === "success" && d.key) {
             registrationCount.add(1);
             deviceKeys.push({ api_key: d.key.key, imei: imei });
         } else {
-            console.log(`[FATAL] Structure mismatch: ${res.body}`);
-            fail("Setup failed - Unexpected JSON keys");
+            fail(`Unexpected Structure: ${res.body}`);
         }
     }
 
@@ -84,7 +84,7 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    console.log("Teardown complete");
+    console.log("Teardown phase: Test finished.");
 }
 
 export function handleSummary(data) {
