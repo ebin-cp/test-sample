@@ -1,12 +1,15 @@
 import http from 'k6/http';
 import ws from 'k6/ws';
-import { check, fail } from 'k6';
+import { check, fail, sleep } from 'k6'; // Added sleep
 import { Counter } from 'k6/metrics';
 import { ulid } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
 
 const registrationCount = new Counter('registrations');
 const ws_metrics_sent_msgs = new Counter('ws_msgs_sent');
-const ws_msg_interval = Number(`${__ENV.WS_MSG_INTERVAL}`)
+
+// Safe parsing for the environment variable
+const envInterval = __ENV.WS_MSG_INTERVAL;
+const ws_msg_interval = envInterval ? Number(envInterval) : 1000;
 
 export const options = {
     vus: 10,
@@ -16,6 +19,7 @@ export const options = {
 export function setup() {
     const deviceKeys = [];
     const numDevices = options.vus;
+    const startTimeNS = Date.now() * 1000000; // Capture start for teardown query
 
     for (let i = 0; i < numDevices; i++) {
         const imei = ulid();
@@ -26,27 +30,30 @@ export function setup() {
             payload,
             params
         );
+        
         if (res.status !== 200) {
             fail(`Aborting: Received ${res.status}. Body: ${res.body}`);
         }
+        
         let d;
         try {
             d = res.json();
         } catch (e) {
             fail(`Aborting: Response not valid JSON. Body: ${res.body}`);
         }
-        if (d.result === "success" && d.key) {
+
+        if (d && d.result === "success" && d.key) {
             registrationCount.add(1);
             deviceKeys.push({ api_key: d.key.key, imei: imei });
         } else {
             fail(`Aborting: Unexpected JSON structure: ${JSON.stringify(d)}`);
         }
     }
-    return { keys: deviceKeys };
+    // Return keys AND the start time for the teardown audit
+    return { keys: deviceKeys, startNS: startTimeNS };
 }
 
 export default function(data) {
-    // Safety check: ensure we have a key for this VU
     if (!data.keys[__VU - 1]) return;
 
     const myKey = data.keys[__VU - 1];
@@ -66,7 +73,7 @@ export default function(data) {
                     const time_str = Date.now() * 1000000;
                     const volume_log = `volume,imei=${myKey.imei} nodeAddress="0x01,0x02,0x03",mask="0x20",sensorValue=6,volume=100.0 ${time_str}`;
                     
-                    socket.send(volume_log); // Removed the array brackets [] if your server expects a raw string
+                    socket.send(volume_log);
                     ws_metrics_sent_msgs.add(1);
                 }, ws_msg_interval);
             });
@@ -79,48 +86,44 @@ export default function(data) {
 }
     
 export function teardown(data) {
-    sleep(120);
-    //Device Retrieval Check
-    const listRes = http.get("http://localhost:8883/api/v1/device",{
-        headers: {"Authorization":`${data.keys[0].api_key}`},
-        timeout:'120s'
+    // Wait for server to flush buffers
+    sleep(5); 
+
+    let totalDbRowsFound = 0; // Declared missing variable
+
+    // Device Retrieval Check
+    const listRes = http.get("http://localhost:8883/api/v1/device", {
+        headers: { "Authorization": `${data.keys[0].api_key}` },
+        timeout: '120s'
     });
-    if(listRes.status !== 200){
-        console.log(`Aborting test: Unexpected JSON structure. Received: ${listRes.body}`)
-    }
-    if(listRes.status === 0 && listRes.body.length === 0){
-        console.log("Stop: Get Device returned 200 but body was empty");
-    }
-    if(listRes.status === 200 && listRes.body.length !== 0){
+
+    if (listRes.status === 200 && listRes.body.length !== 0) {
         const listData = listRes.json();
-        const retrievedCount = listData.length;
-        console.log('Retrieved Device List Count',retrievedCount);
+        console.log('Retrieved Device List Count:', listData.length);
     }
 
     // Device Measurement endpoint check
-    let successfulConns = 0;
-    data.keys.forEach((device)=>{
-        const url =`http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`
-        const res = http.get(url,{
-            headers:{Authorization: `${device.api_key}`},
+    data.keys.forEach((device) => {
+        const url = `http://localhost:8883/api/v1/device/measurements?imei=${device.imei}&measurement=volume&start_ns=${data.startNS}&end_ns=${Date.now() * 1000000}`;
+        
+        const res = http.get(url, {
+            headers: { Authorization: `${device.api_key}` },
             timeout: '120s'
         });
-        if(res.status !== 200){
-            console.log(`Aborting test: Unexpected JSON structure received ${res.body}`)
-        }
-        if(res.status === 200 && res.body.length !== 0){
-            console.log('Measurement Endpoint check res status length',res.body.length)
-        }
+
         if (res.status === 200) {
-            const rowCount = res.json().length;
+            const rows = res.json();
+            const rowCount = Array.isArray(rows) ? rows.length : 0;
             console.log(`DEVICE AUDIT [${device.imei}]: Total Rows Found = ${rowCount}`);
-            successfulConns++;
-            totalDbRows += (rowCount * 4); 
+            totalDbRowsFound += rowCount;
         } else {
             console.log(`DEVICE AUDIT [${device.imei}]: FAILED - Status ${res.status}`);
         }
-        sleep(5); 
+        // Small sleep to avoid hammering the DB during teardown
+        sleep(0.5); 
     });
+
+    console.log(`TOTAL AUDIT COMPLETE: Found ${totalDbRowsFound} total entries across all devices.`);
 }
 
 export function handleSummary(data) {
