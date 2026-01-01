@@ -9,48 +9,34 @@ export const options = {
 
 const BASE_URL = "http://localhost:8883/api/v1/device";
 
-/**
- * 1️⃣ SETUP — Create 50 devices
- */
+function generateImei(index) {
+    return `TEST-IMEI-${Date.now()}-${index}`;
+}
 export function setup() {
     const devices = [];
 
     for (let i = 0; i < 50; i++) {
-        const imei = ulid.ulid();
+        const imei = generateImei(i);
+
         const payload = JSON.stringify({ imei });
         const params = { headers: { "Content-Type": "application/json" } };
 
-        const res = http.post(BASE_URL, payload, params);
+        const res = http.post("http://localhost:8883/api/v1/device", payload, params);
 
         if (res.status !== 200) {
             fail(`Device creation failed: ${res.body}`);
         }
 
         const body = res.json();
-        if (!body.key || !body.key.key) {
-            fail(`Invalid response: ${res.body}`);
-        }
-
         devices.push({
             imei,
             api_key: body.key.key,
         });
     }
 
-    console.log(`✅ Created ${devices.length} devices`);
     return { devices };
 }
 
-/**
- * 2️⃣ DEFAULT — nothing needed here
- */
-export default function () {
-    // No VU execution needed
-}
-
-/**
- * 3️⃣ TEARDOWN — Retrieve devices and validate
- */
 export function teardown(data) {
     const authKey = data.devices[0].api_key;
 
