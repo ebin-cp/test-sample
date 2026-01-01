@@ -1,43 +1,45 @@
-name: IoT Device Integration Test
-
-on: [push, workflow_dispatch]
+name: 50-Device Concurrent WebSocket Messaging stress test
+on:
+    workflow_dispatch:
 
 jobs:
-  integration-test:
+  load-test-with-docker:
     runs-on: ubuntu-latest
+    environment: load_test
+    strategy:
+      fail-fast: false
+      matrix:
+        WS_MSG_INTERVAL: [1000]
+    timeout-minutes: 5
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Start Environment
+      - name: Create .env file
         run: |
           echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
           echo "DATABASE_USER=${{ secrets.DB_USER }}" >> .env
           echo "DATABASE_USER_PASSWORD=${{ secrets.DB_USER_PASSWD }}" >> .env
           echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
-          echo "DATABASE_HOST=localhost" >> .env
-          echo "DATABASE_PORT=3306" >> .env
-          mkdir -p docker/v1/
+          echo "DATABASE_HOST=${{ secrets.DB_HOST }}" >> .env
+          echo "DATABASE_PORT=${{ secrets.DB_PORT }}" >> .env
           mv .env docker/v1/
-          docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for API
-        run: sleep 20 && curl -s http://localhost:8883/health || echo "API starting..."
+      - name: Start Services
+        run: docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Setup Grafana k6
+      - name: Wait for Services to be Ready
+        run: |
+          sleep 10 
+          curl --retry 5 --retry-connrefused http://localhost:8883/health
+
+      - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
 
-      - name: Run k6 Concurrent Test
-        shell: bash
-        run: |
-          ulimit -n 4096
-          # We use --logformat raw to make parsing easier
-          k6 run tests/test-check.js --summary-mode full
-          
-          # Debug: Print logs to the GH console so you can see if they exist
-          echo "--- START OF K6 LOG ---"
-          cat test_output.log
-          echo "--- END OF K6 LOG ---"
+      - name: Execute Test
+        run: k6 run tests/load-test.js --summary-mode full
+        env:
+          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
       - name: Get Devices Count
         env:
@@ -82,18 +84,6 @@ jobs:
             echo "Success: Data counts match."
           fi
 
-      - name: Generate GitHub Summary
+      - name: Stop Services
         if: always()
-        run: |
-          echo "## 📊 Test Results" >> $GITHUB_STEP_SUMMARY
-          
-          echo "### 📱 Device Creation" >> $GITHUB_STEP_SUMMARY
-          echo "| Status | Is Empty | Count |" >> $GITHUB_STEP_SUMMARY
-          echo "| --- | --- | --- |" >> $GITHUB_STEP_SUMMARY
-          # Improved Parsing
-          grep "DEV_CHECK_MARKER" test_output.log | awk -F'|' '{print "| "$2" | "$3" | "$4" |"}' >> $GITHUB_STEP_SUMMARY
-
-          echo "### 🧪 Measurement Counts" >> $GITHUB_STEP_SUMMARY
-          echo "| IMEI | API Status | Count (60 Expected) |" >> $GITHUB_STEP_SUMMARY
-          echo "| --- | --- | --- |" >> $GITHUB_STEP_SUMMARY
-          grep "MEASURE_CHECK_MARKER" test_output.log | awk -F'|' '{print "| "$2" | "$3" | "$4" |"}' >> $GITHUB_STEP_SUMMARY
+        run: docker compose -f ./docker/v1/docker-compose.yml down -v
