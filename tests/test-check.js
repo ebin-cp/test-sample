@@ -2,7 +2,7 @@ import http from 'k6/http';
 import ws from 'k6/ws';
 import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
-import { ulid } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
+import * as ulid from "https://esm.run/ulid";
 
 const registrationCount = new Counter('registrations');
 const ws_metrics_sent_msgs = new Counter('ws_msgs_sent');
@@ -19,7 +19,7 @@ export function setup() {
     const startTimeNS = Date.now() * 1000000;
 
     for (let i = 0; i < numDevices; i++) {
-        const imei = ulid();
+        const imei = ulid.ulid();
         const payload = JSON.stringify({ imei: imei });
         const params = { headers: { "Content-Type": "application/json" } };
         
