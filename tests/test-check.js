@@ -2,7 +2,6 @@ import http from 'k6/http';
 import ws from 'k6/ws';
 import { check, fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
-import * as ulid from "https://esm.run/ulid";
 
 const registrationCount = new Counter('registrations');
 const ws_metrics_sent_msgs = new Counter('ws_msgs_sent');
@@ -13,52 +12,47 @@ export const options = {
     duration: "1m",
 };
 
+// Helper to replace external ULID dependency
+function generateID() {
+    return 'dev-' + Math.random().toString(36).substring(2, 15);
+}
+
 export function setup() {
     const deviceKeys = [];
     const numDevices = 10;
     const startTimeNS = Date.now() * 1000000;
 
     for (let i = 0; i < numDevices; i++) {
-        const imei = ulid.ulid();
+        const imei = generateID();
         const payload = JSON.stringify({ imei: imei });
         const params = { headers: { "Content-Type": "application/json" } };
         
-        console.log(`[SETUP] Registering device ${i + 1}/${numDevices} with IMEI: ${imei}`);
+        console.log(`[SETUP] Requesting device ${i+1}/10`);
         
         const res = http.post("http://localhost:8883/api/v1/device", payload, params);
         
-        // 1. Check if response exists at all
-        if (!res) {
-            fail("[FATAL] No response received from server. Is the Nginx proxy running?");
+        // Check 1: Did the request fail?
+        if (!res || res.status !== 200) {
+            console.log(`[FATAL] HTTP Error ${res ? res.status : 'No Res'}: ${res ? res.body : 'No Body'}`);
+            fail("Setup failed - Server unreachable or returned error");
         }
 
-        // 2. Check status code
-        if (res.status !== 200) {
-            console.error(`[ERROR] Registration failed. Status: ${res.status}. Body: ${res.body}`);
-            fail(`[FATAL] Server returned ${res.status} instead of 200.`);
-        }
-
-        // 3. Safe JSON parsing
+        // Check 2: Manually parse to avoid .json() issues
         let d;
         try {
-            // Only try to parse if there's actually a body string
-            if (res.body && res.body.trim().length > 0) {
-                d = JSON.parse(res.body);
-            } else {
-                fail("[FATAL] Server returned 200 but the response body was empty.");
-            }
+            d = JSON.parse(res.body);
         } catch (e) {
-            console.error(`[ERROR] Failed to parse JSON. Raw Body: ${res.body}`);
-            fail("[FATAL] Response body was not valid JSON.");
+            console.log(`[FATAL] JSON Parse Error. Body was: ${res.body}`);
+            fail("Setup failed - Response not JSON");
         }
 
-        // 4. Validate object structure
+        // Check 3: Final validation
         if (d && d.result === "success" && d.key && d.key.key) {
             registrationCount.add(1);
             deviceKeys.push({ api_key: d.key.key, imei: imei });
         } else {
-            console.error(`[ERROR] Unexpected JSON format: ${JSON.stringify(d)}`);
-            fail("[FATAL] JSON structure is missing 'result' or 'key'.");
+            console.log(`[FATAL] Structure mismatch: ${res.body}`);
+            fail("Setup failed - Unexpected JSON keys");
         }
     }
 
@@ -90,8 +84,7 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    if (!data || !data.keys) return;
-    console.log("Teardown started...");
+    console.log("Teardown complete");
 }
 
 export function handleSummary(data) {
