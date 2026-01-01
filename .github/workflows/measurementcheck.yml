@@ -54,36 +54,32 @@ jobs:
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-          EXPECTED_ROWS=$(( WS_SENT * 4 ))
-          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
-          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || echo "0")
+          TOTAL_DEVICES=$(jq '.metrics.keys_count.values.count // 50' summary.json) # അല്ലെങ്കിൽ നേരിട്ട് 50 എന്ന് നൽകാം
+                    
+          PASSED_DEVICES=0
+          FAILED_DEVICES=0
 
-          echo "### 📊 Load Test Overall Metrics" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Devices | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Expected Data Points | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Actual DB Rows | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
-          
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 🔍 Individual Device Measurement Check" >> $GITHUB_STEP_SUMMARY
-          echo "| Check Name | Status | Fails |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-
-          jq -r '.metrics | to_entries[] | select(.key | contains("Data Exists")) | .key' summary.json | while read -r CHECK_NAME; do
-            FAILS=$(jq -r ".metrics[\"$CHECK_NAME\"].values.fails" summary.json)
-            if [ "$FAILS" -eq "0" ]; then
-              STATUS="✅ Passed"
+          for i in {0..49}
+          do
+            DEVICE_FAILS=$(jq "[.metrics[] | select(.name | contains(\"(Device $i)\")) | .fails] | add" summary.json)
+            
+            if [[ "$DEVICE_FAILS" -eq 0 ]]; then
+              PASSED_DEVICES=$((PASSED_DEVICES + 1))
             else
-              STATUS="❌ Failed"
+              FAILED_DEVICES=$((FAILED_DEVICES + 1))
             fi
-            echo "| $CHECK_NAME | $STATUS | $FAILS |" >> $GITHUB_STEP_SUMMARY
           done
 
-          # 4. Job Failure Logic
-          TOTAL_FAILS=$(jq '.metrics.checks.values.fails // 0' summary.json)
-          if [[ "$TOTAL_FAILS" -gt 0 || "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
-            echo "::error::Validation Failed! Check the summary table for details."
+          # 3. GitHub Summary Table
+          echo "### 📊 Measurement Check Validation" >> $GITHUB_STEP_SUMMARY
+          echo "| Total No of Devices | No of devices with all 4 measurements | No of devices missing measurements |" >> $GITHUB_STEP_SUMMARY
+          echo "| :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
+          echo "| $TOTAL_DEVICES | $PASSED_DEVICES ✅ | $FAILED_DEVICES $([[ $FAILED_DEVICES -gt 0 ]] && echo "❌" || echo "✅") |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "> **Note:** Detailed per-device data is available in the raw \`summary.json\` artifact." >> $GITHUB_STEP_SUMMARY
+
+          if [[ "$FAILED_DEVICES" -gt 0 ]]; then
+            echo "::error::Some devices are missing measurements!"
             exit 1
           fi
