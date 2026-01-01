@@ -39,6 +39,49 @@ jobs:
           cat test_output.log
           echo "--- END OF K6 LOG ---"
 
+      - name: Get Devices Count
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+        run: |
+          docker exec -e MYSQL_PWD mysql mysql \
+            -u root \
+            -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;"
+
+      - name: Extract k6 WS Messages Sent
+        id: k6_stats
+        run: |
+          WS_SENT=$(jq '.metrics.ws_msgs_sent.values.count' summary.json)
+          echo "WS_SENT=$WS_SENT" >> $GITHUB_ENV
+          echo "$WS_SENT messages sent using k6"
+
+      - name: Get Log Messages Count
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+        run: |
+          ROW_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;"| awk '{print $1}')
+          echo "ROW_COUNT=$ROW_COUNT" >> $GITHUB_ENV
+          echo "$ROW_COUNT rows found in database."
+
+      - name: Compare and Validate
+        run: |
+          if [[ -z "$WS_SENT" || -z "$ROW_COUNT" ]]; then
+            echo "::error::Metrics missing. K6: $WS_SENT, DB: $ROW_COUNT"
+            exit 1
+          fi
+
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+
+          echo "K6 Messages Sent: $WS_SENT"
+          echo "Expected Rows ($WS_SENT * 4): $EXPECTED_ROWS"
+          echo "Actual Rows in MySQL: $ROW_COUNT"
+
+          if [ "$ROW_COUNT" -ne "$EXPECTED_ROWS" ]; then
+            echo "::error::Data integrity check failed! Expected $EXPECTED_ROWS rows but found $ROW_COUNT."
+            exit 1
+          else
+            echo "Success: Data counts match."
+          fi
+
       - name: Generate GitHub Summary
         if: always()
         run: |
