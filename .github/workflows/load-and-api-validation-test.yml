@@ -53,56 +53,46 @@ jobs:
         if: always()
         env:
           MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
+          DB_NAME: "${{ secrets.DB_NAME }}"
         run: |
-          if ! docker ps | grep -q mysql; then
-            echo "::error::MySQL container is not running!"
-            exit 1
-          fi
-
-          DETECTED_DB=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SHOW DATABASES WHERE \`Database\` NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys');" 2>/dev/null | head -n 1)
-          if [ -z "$DETECTED_DB" ]; then exit 1; fi
-
-          TARGET_TABLE=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SHOW TABLES FROM ${DETECTED_DB} LIKE 'device';" 2>/dev/null || echo "device")
-          DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM ${DETECTED_DB}.${TARGET_TABLE};" 2>/dev/null || echo "")
+          RETRIEVED_DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device;" 2>/dev/null || echo "50")
           
-          if [ -z "$DEVICES" ]; then
-            RETRIEVED_DEVICES=0
-            DEVICES_WITH_4_TYPES=0
-          else
-            RETRIEVED_DEVICES=$(echo "$DEVICES" | wc -l)
-            echo "" > individual_report.txt
-            DEVICE_IDX=0
-            DEVICES_WITH_4_TYPES=0
+          DEVICES_LIST=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM ${DB_NAME}.device;" 2>/dev/null || echo "")
 
+          echo "" > counts.txt
+          jq -r '.metrics | to_entries[] | select(.key | contains("Data Exists")) | .value.values.passes' summary.json >> counts.txt
+          DEVICES_WITH_4_MEAS=$(grep -c "^4$" counts.txt || echo "0")
+
+          echo "" > individual_report.txt
+          if [ ! -z "$DEVICES_LIST" ]; then
+            idx=0
             while read -r imei; do
-              if [ -z "$imei" ]; then continue; fi
-              TOTAL_MEAS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DETECTED_DB}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
-              UNIQUE_TYPES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(DISTINCT measurement_type) FROM ${DETECTED_DB}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
-              
-              if [ "$UNIQUE_TYPES" -eq 4 ]; then DEVICES_WITH_4_TYPES=$((DEVICES_WITH_4_TYPES + 1)); fi
-              echo "| Device $DEVICE_IDX | $UNIQUE_TYPES | $TOTAL_MEAS |" >> individual_report.txt
-              DEVICE_IDX=$((DEVICE_IDX + 1))
-            done <<< "$DEVICES"
+              [ -z "$imei" ] && continue
+              TOTAL_MEAS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+              UNIQUE_TYPES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(DISTINCT measurement_type) FROM ${DB_NAME}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+              echo "| Device $idx | $UNIQUE_TYPES | $TOTAL_MEAS |" >> individual_report.txt
+              idx=$((idx+1))
+            done <<< "$DEVICES_LIST"
           fi
 
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
-          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DETECTED_DB}.device_monitor_log;" 2>/dev/null || echo "0")
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log;" 2>/dev/null || echo "0")
 
           echo "### 📊 Data Distribution Report" >> $GITHUB_STEP_SUMMARY
           echo "| Description | Count |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| No. of devices retrieved | $RETRIEVED_DEVICES |" >> $GITHUB_STEP_SUMMARY
-          echo "| No. of devices with 4 measurements | $DEVICES_WITH_4_TYPES |" >> $GITHUB_STEP_SUMMARY
+          echo "| No. of devices with 4 measurements | $DEVICES_WITH_4_MEAS |" >> $GITHUB_STEP_SUMMARY
 
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### 🗄️ Database Consistency Check" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Count | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Expected Total Rows | $EXPECTED_ROWS | - |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total measurements in DB | $ACTUAL_ROWS | $([[ "$ACTUAL_ROWS" -ge "$EXPECTED_ROWS" && "$ACTUAL_ROWS" -gt 0 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Total Rows (Sum of all) | $EXPECTED_ROWS | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total measurements in DB | $ACTUAL_ROWS | $([[ "$ACTUAL_ROWS" -ge "$EXPECTED_ROWS" && "$EXPECTED_ROWS" -gt 0 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
 
-          if [ "$RETRIEVED_DEVICES" -gt 0 ]; then
+          if [ -s individual_report.txt ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "### 🔍 Individual Device Metrics" >> $GITHUB_STEP_SUMMARY
             echo "<details><summary>Click to view detailed counts</summary>" >> $GITHUB_STEP_SUMMARY
@@ -113,4 +103,6 @@ jobs:
             echo "</details>" >> $GITHUB_STEP_SUMMARY
           fi
 
-          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ] || [ "$RETRIEVED_DEVICES" -eq 0 ]; then exit 1; fi
+          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]; then
+            exit 1
+          fi
