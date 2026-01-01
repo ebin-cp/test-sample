@@ -38,6 +38,8 @@ jobs:
 
       - name: Setup Grafana K6
         uses: grafana/setup-k6-action@v1
+        with:
+          k6-version: 0.55.0
 
       - name: Execute Test
         run: k6 run tests/test-check.js --summary-mode full

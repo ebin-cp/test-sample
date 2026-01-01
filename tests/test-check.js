@@ -16,7 +16,7 @@ export const options = {
 
 export function setup() {
     const deviceKeys = [];
-    const numDevices = options.vus;
+    const numDevices = 10; 
     const startTimeNS = Date.now() * 1000000;
 
     for (let i = 0; i < numDevices; i++) {
@@ -26,23 +26,28 @@ export function setup() {
         
         const res = http.post("http://localhost:8883/api/v1/device", payload, params);
         
-        let d;
-        try {
-            // Only attempt to parse if there is a body
-            d = (res.body && res.body.length > 0) ? res.json() : null;
-        } catch (e) {
-            console.error(`RAW RESPONSE FROM SERVER: ${res.body}`);
-            fail(`Aborting: Could not parse JSON. Status: ${res.status}`);
+        // --- CRITICAL FIX START ---
+        if (!res || res.status !== 200) {
+            // This will print to your GitHub Action console so you can see the REAL error
+            console.log(`FAILED TO REGISTER. Status: ${res ? res.status : 'No Response'}. Body: ${res ? res.body : 'Empty'}`);
+            fail(`Stopping test: Setup failed on device ${i+1}`);
         }
 
-        // SAFE CHECK: This prevents the "Value is not an object" error
-        if (d && typeof d === 'object' && d.result === "success" && d.key) {
+        let d;
+        try {
+            d = res.json();
+        } catch (e) {
+            fail(`Aborting: API returned 200 but body was not JSON. Body: ${res.body}`);
+        }
+
+        // Only check properties if d actually exists
+        if (d && d.result === "success" && d.key) {
             registrationCount.add(1);
             deviceKeys.push({ api_key: d.key.key, imei: imei });
         } else {
-            console.error(`RAW RESPONSE FROM SERVER: ${res.body}`);
-            fail(`Aborting: API returned status ${res.status} but invalid body.`);
+            fail(`Aborting: Unexpected JSON structure: ${JSON.stringify(d)}`);
         }
+        // --- CRITICAL FIX END ---
     }
     return { keys: deviceKeys, startNS: startTimeNS };
 }
