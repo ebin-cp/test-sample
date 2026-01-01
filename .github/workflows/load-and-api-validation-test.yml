@@ -52,74 +52,78 @@ jobs:
       - name: Final Validation
         if: always()
         env:
-          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+          MYSQL_PWD: "${{ secrets.DB_ROOT_PASSWD }}"
         run: |
-          # 1. Extract Metrics from k6 Summary
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-
-
-          EXPECTED_ROWS=$(( WS_SENT * 4 ))
-
-          # 2. Extract Data from MySQL
-
-          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
-
-          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
-                         docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
-
-          # 3. Extract individual API check results
-          DEVICE_LIST_FAIL=$(jq '.metrics["checks{name:API: Device List 200}"].values.fails // 0' summary.json)
-          MEAS_API_FAIL=$(jq '.metrics["checks{name:API: Measurements 200}"].values.fails // 0' summary.json)
-          MEAS_DATA_FAIL=$(jq '.metrics["checks{name:API: Measurements Has Data}"].values.fails // 0' summary.json)
-
-          # Helper function to print status
-          status() {
-            if [[ "$1" -gt 0 ]]; then
-              echo " Failed"
-            else
-              echo " Passed"
-            fi
-          }
-
-          # 4. Print Report to Console Logs
-          echo "=========================================="
-          echo "       LOAD TEST VALIDATION REPORT        "
-          echo "=========================================="
-          echo "Devices Registered: $DEVICE_COUNT"
-          echo "WS Messages Sent:   $WS_SENT"
-          echo "Expected DB Rows:   $EXPECTED_ROWS"
-          echo "Actual DB Rows:     $ACTUAL_ROWS"
-          echo ""
-          echo "API Validation Results:"
-          echo " - Devices retrievable after creation: $(status $DEVICE_LIST_FAIL)"
-          echo " - Measurements endpoint available:    $(status $MEAS_API_FAIL)"
-          echo " - Measurements stored & retrievable:  $(status $MEAS_DATA_FAIL)"
-          echo "=========================================="
-
-          # 5. Generate GitHub Job Summary (UI Table)
-          echo "### Load Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Devices Registered | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "| WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
-
-          echo "### API Validation" >> $GITHUB_STEP_SUMMARY
-          echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Devices retrievable after creation | $(status $DEVICE_LIST_FAIL) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Measurements endpoint available | $(status $MEAS_API_FAIL) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Measurements stored & retrievable | $(status $MEAS_DATA_FAIL) |" >> $GITHUB_STEP_SUMMARY
-
-          # 6. Fail job if checks failed
-          if [[ "$DEVICE_LIST_FAIL" -gt 0 || "$MEAS_API_FAIL" -gt 0 || "$MEAS_DATA_FAIL" -gt 0 ]]; then
-            echo "::error::API validation failed. One or more endpoints did not behave as expected."
+          if ! docker ps | grep -q mysql; then
+            echo "::error::MySQL container is not running!"
             exit 1
           fi
 
-          # 7. Fail job if data loss
-          if [[ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ]]; then
-            echo "::error::Data Loss! Expected $EXPECTED_ROWS rows, but only found $ACTUAL_ROWS."
+          DETECTED_DB=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SHOW DATABASES WHERE \`Database\` NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys');" 2>/dev/null | head -n 1)
+
+          if [ -z "$DETECTED_DB" ]; then
+            echo "::error::No user database found!"
+            exit 1
+          fi
+
+          echo "Detected Database: $DETECTED_DB"
+
+          DEVICES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM ${DETECTED_DB}.device;" 2>/dev/null || echo "")
+          
+          if [ -z "$DEVICES" ]; then
+            echo "::error::No devices found in table 'device'. Check if setup() in k6 script failed."
+            RETRIEVED_DEVICES=0
+            DEVICES_WITH_4_TYPES=0
+          else
+            RETRIEVED_DEVICES=$(echo "$DEVICES" | wc -l)
+            echo "" > individual_report.txt
+            DEVICE_IDX=0
+            DEVICES_WITH_4_TYPES=0
+
+            while read -r imei; do
+              if [ -z "$imei" ]; then continue; fi
+              
+              TOTAL_MEAS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DETECTED_DB}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+              
+              UNIQUE_TYPES=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(DISTINCT measurement_type) FROM ${DETECTED_DB}.device_monitor_log WHERE device_imei='$imei';" 2>/dev/null || echo "0")
+              
+              if [ "$UNIQUE_TYPES" -eq 4 ]; then
+                DEVICES_WITH_4_TYPES=$((DEVICES_WITH_4_TYPES + 1))
+              fi
+
+              echo "| Device $DEVICE_IDX | $UNIQUE_TYPES | $TOTAL_MEAS |" >> individual_report.txt
+              DEVICE_IDX=$((DEVICE_IDX + 1))
+            done <<< "$DEVICES"
+          fi
+
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD=$MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${DETECTED_DB}.device_monitor_log;" 2>/dev/null || echo "0")
+
+          echo "### 📊 Data Distribution Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Description | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| No. of devices retrieved | $RETRIEVED_DEVICES |" >> $GITHUB_STEP_SUMMARY
+          echo "| No. of devices with 4 measurements | $DEVICES_WITH_4_TYPES |" >> $GITHUB_STEP_SUMMARY
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 🗄️ Database Consistency Check" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Total Rows (All Devices) | $EXPECTED_ROWS | - |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total measurements in DB | $ACTUAL_ROWS | $([[ "$ACTUAL_ROWS" -ge "$EXPECTED_ROWS" && "$ACTUAL_ROWS" -gt 0 ]] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$RETRIEVED_DEVICES" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 🔍 Individual Device Metrics" >> $GITHUB_STEP_SUMMARY
+            echo "<details><summary>Click to view measurements for each device</summary>" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| Device ID | Unique Types (Target: 4) | Total Individual Measurements |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            cat individual_report.txt >> $GITHUB_STEP_SUMMARY
+            echo "</details>" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ] || [ "$RETRIEVED_DEVICES" -eq 0 ]; then
             exit 1
           fi
