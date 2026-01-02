@@ -70,11 +70,17 @@ jobs:
           echo "| Total Logs in Database (Received)| $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          ALL_COUNTS=$(jq -r '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count")) | .name' summary.json | grep -oP '\d+$')
+          EXPECTED_COUNT=$(echo "$ALL_COUNTS" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
+
+          if [ -z "$EXPECTED_COUNT" ] || [ "$EXPECTED_COUNT" -eq 0 ]; then
+            EXPECTED_COUNT=$((WS_SENT / TOTAL_DEVICES_RETREIVED))
+          fi
+
           # Consistency Summary Section
           echo "#### **Consistent Data Streams** (Matched)" >> $GITHUB_STEP_SUMMARY
           echo "* **Matched Devices:** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "* **Individual measurement count received:** **$EXPECTED_COUNT** measurements per device in both K6 and DB**." >> $GITHUB_STEP_SUMMARY
-          
+          echo "* **Individual measurement count received: **$EXPECTED_COUNT** measurements per device in both K6 and DB." >> $GITHUB_STEP_SUMMARY
           if [ "$MISMATCH_COUNT" -gt 0 ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "#### **Measurement Integrity Gaps** (Mismatched)" >> $GITHUB_STEP_SUMMARY
@@ -83,7 +89,6 @@ jobs:
             echo "" >> $GITHUB_STEP_SUMMARY
             echo "| API Count (k6) | DB Count (SQL) | No. of Devices |" >> $GITHUB_STEP_SUMMARY
             echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-            
             sort mismatches.txt | sed '/^\s*$/d' | uniq -c | sort -nr | while read count k6 db; do
               echo "| $k6 | $db | $count |" >> $GITHUB_STEP_SUMMARY
             done
