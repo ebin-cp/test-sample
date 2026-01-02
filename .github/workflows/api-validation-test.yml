@@ -57,11 +57,11 @@ jobs:
         run: |
           # 1. Fetch baseline metrics
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-          TOTAL_DEVICES_RETRIEVED= $(docker exec mysql mysql -u root -p${{env.DB_PASS}} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "Data not received")
+          TOTAL_DEVICES_RETRIEVED=$(docker exec mysql mysql -u root -p${{env.DB_PASS}} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "Data not received")
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "Data not received")
           
-          echo "# 🏁 Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
-          echo "### 📊 Overall Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "# Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
+          echo "### Overall Statistics" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| Total WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
@@ -70,7 +70,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # 2. Per-Device Consistency Check
-          echo "### 📱 Per-Device Consistency Check" >> $GITHUB_STEP_SUMMARY
+          echo "###Per-Device Consistency Check" >> $GITHUB_STEP_SUMMARY
           echo "| IMEI | API Count (k6) | DB Count (SQL) | Status |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
 
