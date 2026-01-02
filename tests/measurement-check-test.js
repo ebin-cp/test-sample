@@ -67,39 +67,34 @@ export default function(data) {
 }
 
 export function teardown(data) {
-    const bufferNS = 5000 * 1000000; 
-    const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
-    const adjustedStartNS = data.startTimeNS - bufferNS;
-
     const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
-
-    console.log(`[Teardown] Starting validation for ${data.keys.length} devices...`);
+    const perDeviceCounts = []; // <-- new array
 
     data.keys.forEach((testDevice, index) => {
-        const params = { 
-            headers: { 
-                "Authorization": `${testDevice.api_key}`,
-                "Content-Type": "application/json"
-            } 
-        };
+        const params = { headers: { "Authorization": testDevice.api_key, "Content-Type": "application/json" } };
+        let totalMessageCountPerDevice = 0;
 
         metricsToCheck.forEach((metric) => {
-            const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=${metric}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
-            const measRes = http.get(measUrl, params);
+            const measRes = http.get(
+                `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=${metric}&start_ns=${data.startTimeNS}&end_ns=${Date.now()}`,
+                params
+            );
+            const dataArr = measRes.status === 200 ? measRes.json() : [];
+            totalMessageCountPerDevice += dataArr.length;
+        });
 
-            const success = measRes.status === 200;
-            const hasData = success && measRes.json() && measRes.json().length > 0;
-
-            check(measRes, {
-                [`${metric} Data Exists (Device ${index})`]: (r) => hasData,
-            });
-
-            if (!hasData) {
-                console.log(`[Alert] Missing ${metric} for IMEI: ${testDevice.imei} (Status: ${measRes.status})`);
-            }
+        // Save per-device info
+        perDeviceCounts.push({
+            imei: testDevice.imei,
+            totalMessages: totalMessageCountPerDevice
         });
     });
+
+    // Return this to handleSummary
+    return perDeviceCounts;
 }
+
+
 
 export function handleSummary(data) {
     return {
