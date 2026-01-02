@@ -29,7 +29,7 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: k6 run tests/measurement-check-test.js
+        run: k6 run tests/api-validation-test.js
         env:
           WS_MSG_INTERVAL: 1000
 
