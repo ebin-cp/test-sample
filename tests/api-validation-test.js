@@ -5,7 +5,7 @@ import { check, fail, } from "k6";
 import { Counter } from "k6/metrics";
 
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
-const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 300;
+const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL);
 
 export const options = {
     vus: 50,

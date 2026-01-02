@@ -5,7 +5,12 @@ on: [push]
 jobs:
   api-data-validation-test:
     runs-on: ubuntu-latest
-    environment: load_test
+    environment: api-validation
+    strategy:
+      fail-fast: false
+      matrix:
+        WS_MSG_INTERVAL: [200, 300, 500]
+    timeout-minutes: 5
 
     steps:
       - name: Checkout code
@@ -31,7 +36,7 @@ jobs:
       - name: Execute Test
         run: k6 run tests/api-validation-test.js
         env:
-          WS_MSG_INTERVAL: 1000
+          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
       - name: Capture Logs for Artifacts
         if: always()
