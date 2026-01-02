@@ -49,44 +49,44 @@ jobs:
             app_logs.txt
             mysql_logs.txt
 
-      - name: Final Validation
+      - name: Final Unified Validation
         if: always()
         env:
           DB_PASS: "${{ secrets.DB_ROOT_PASSWD }}"
           DB_NAME: "${{ secrets.DB_NAME }}"
         run: |
-          # 1. Fetch total counts from Docker MySQL
-          TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.devices;" 2>/dev/null || echo "0")
-          TOTAL_DEVICE_MONITOR_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
-
-          # 2. Extract metrics from k6 summary.json
+          # 1. Fetch baseline metrics
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
+          
+          echo "# 🏁 Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 Overall Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Logs in Database | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
 
-          # 3. Validation Check: Does Teardown data exist?
-          IMEI_LIST=$(jq -r '(.teardown.results // .teardown // []) | .[].imei' summary.json 2>/dev/null || echo "")
+          # 2. Per-Device Consistency Check
+          echo "### 📱 Per-Device Consistency Check" >> $GITHUB_STEP_SUMMARY
+          echo "| IMEI | API Count (k6) | DB Count (SQL) | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
 
-          if [ -z "$IMEI_LIST" ]; then
-            echo "### ⚠️ Validation Warning" >> $GITHUB_STEP_SUMMARY
-            echo "Could not find device results in summary.json teardown section." >> $GITHUB_STEP_SUMMARY
-            echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-            echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-            echo "| Total WS Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-            echo "| Total DB Logs | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
-          else
-            # 3. Success Path - Generate Comparison Table
-            echo "### 📊 Consistency Check" >> $GITHUB_STEP_SUMMARY
-            echo "| IMEI | API Count (k6) | DB Count (SQL) | Status |" >> $GITHUB_STEP_SUMMARY
-            echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-
-            for id in $IMEI_LIST; do
-              # Safely get the K6 count for this specific IMEI
-              K6_COUNT=$(jq -r "(.teardown.results // .teardown) | .[] | select(.imei==\"$id\") | .total" summary.json)
-              
-              # Get the DB count
-              DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s \
-                -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
-              
-              if [ "$K6_COUNT" -eq "$DB_COUNT" ]; then STATUS="✅ Match"; else STATUS="❌ Mismatch"; fi
-              echo "| $id | $K6_COUNT | $DB_COUNT | $STATUS |" >> $GITHUB_STEP_SUMMARY
-            done
-          fi
+          # Get the list of IMEIs from setup_data
+          IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
+          
+          INDEX=0
+          for id in $IMEI_LIST; do
+            # Extract the count from the 'checks' name string using regex
+            # It looks for "Total Messages Count for Device X: VALUE"
+            K6_COUNT=$(jq -r --arg idx "$INDEX" '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count for Device \($idx)")) | .name' summary.json | grep -oP '\d+$' || echo "0")
+            
+            # Fetch DB count for this IMEI
+            DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s \
+              -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
+            
+            if [ "$K6_COUNT" -eq "$DB_COUNT" ]; then STATUS="✅ Match"; else STATUS="❌ Mismatch"; fi
+            echo "| $id | $K6_COUNT | $DB_COUNT | $STATUS |" >> $GITHUB_STEP_SUMMARY
+            
+            INDEX=$((INDEX+1))
+          done
