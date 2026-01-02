@@ -9,7 +9,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [200, 300, 500]
+        WS_MSG_INTERVAL: [100, 200, 300, 500]
     timeout-minutes: 5
 
     steps:
@@ -48,7 +48,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: load-test-results
+          name: api-validation-test-${{ matrix.WS_MSG_INTERVAL }}
           path: |
             summary.json
             app_logs.txt
