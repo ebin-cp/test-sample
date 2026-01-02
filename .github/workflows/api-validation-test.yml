@@ -72,32 +72,23 @@ jobs:
 
           # 2. Per-Device Consistency Check
           echo "### Per-Device Consistency Check" >> $GITHUB_STEP_SUMMARY
-          echo "| IMEI | API Count (k6) | DB Count (SQL) | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-
-          # Get the list of IMEIs from setup_data
-          IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
-          
+          echo "| Sl. No | IMEI | API Count (k6) | DB Count (SQL) | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)         
           INDEX=0
+          SL_NO=1 
           for id in $IMEI_LIST; do
-            # Extract the count precisely
             K6_COUNT=$(jq -r --arg idx "$INDEX" '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | head -n 1 | grep -oP '\d+$' || echo "0")
-            
-            # Fetch DB count
             DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s \
               -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
-            
-            # Use 0 if the variables are empty
             K6_VAL=${K6_COUNT:-0}
             DB_VAL=${DB_COUNT:-0}
-
             if [ "$K6_VAL" -eq "$DB_VAL" ] && [ "$K6_VAL" -gt 0 ]; then 
               STATUS="Match"
             else 
               STATUS="Mismatch"
             fi
-
-            echo "| $id | $K6_VAL | $DB_VAL | $STATUS |" >> $GITHUB_STEP_SUMMARY
-            
+            echo "| $SL_NO | $id | $K6_VAL | $DB_VAL | $STATUS |" >> $GITHUB_STEP_SUMMARY
             INDEX=$((INDEX+1))
+            SL_NO=$((SL_NO+1))
           done

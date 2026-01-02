@@ -1,7 +1,7 @@
 import http from "k6/http";
 import * as ulid from "https://esm.run/ulid";
 import ws from "k6/ws";
-import { check, fail, sleep } from "k6";
+import { check, fail, } from "k6";
 import { Counter } from "k6/metrics";
 
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
