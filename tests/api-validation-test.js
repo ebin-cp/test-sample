@@ -109,7 +109,8 @@ export function teardown(data) {
 }
 
 export function handleSummary(data) {
-    const results = data.teardown ? data.teardown.results : [];
+    const results = (data.teardown && data.teardown.results) ? data.teardown.results : [];
+
     data.db_validation = results.map(item => ({
         imei: item.imei,
         api_count: item.total,
@@ -117,6 +118,6 @@ export function handleSummary(data) {
     }));
 
     return {
-        "summary.json": JSON.stringify(data,null,4),
-    }
+        "summary.json": JSON.stringify(data, null, 4),
+    };
 }
