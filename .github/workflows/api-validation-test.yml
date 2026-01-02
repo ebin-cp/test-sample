@@ -1,6 +1,6 @@
 name: API data validation in K6 and DB
 
-on: [push]
+on: [workflow_dispatch]
 
 jobs:
   api-data-validation-test:
