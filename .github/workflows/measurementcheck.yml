@@ -62,20 +62,8 @@ jobs:
           # 2. Extract metrics from k6 summary.json
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
-      
-          # 3. Start the GitHub Summary Report
-          echo "### 📊 Performance Test Validation" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Devices Created | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Logs in DB | $TOTAL_DEVICE_MONITOR_LOGS |" >> $GITHUB_STEP_SUMMARY
           
-          echo -e "\n### 📱 Individual Device Log Breakdown" >> $GITHUB_STEP_SUMMARY
-          echo "| IMEI | Log Count | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-
-          # 4. Fetch all devices per msg count and print summary
+          # 3. Fetch all devices per msg count and print summary
           IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
           declare -A counts_map
           
@@ -84,16 +72,23 @@ jobs:
               -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")          
             counts_map[$COUNT]=$((counts_map[$COUNT]+1))
           done          
-          echo "### 📱 Device Log Summary" >> $GITHUB_STEP_SUMMARY
+          # echo "### 📱 Device Log Summary" >> $GITHUB_STEP_SUMMARY
+          echo "### 📊 API Test Validation" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Devices Retrieved | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
           if [ ${#counts_map[@]} -eq 1 ]; then
               # All devices have same count
               for count in "${!counts_map[@]}"; do
-                  echo "Total count per device: $count" >> $GITHUB_STEP_SUMMARY
+                  echo "| Total count per device | $count |" >> $GITHUB_STEP_SUMMARY
               done
           else
               # Multiple counts exist
               echo "Device log counts vary:" >> $GITHUB_STEP_SUMMARY
               for count in "${!counts_map[@]}"; do
-                  echo "- Total count $count for ${counts_map[$count]} devices" >> $GITHUB_STEP_SUMMARY
+                  echo "| Total count $count for ${counts_map[$count]} devices |" >> $GITHUB_STEP_SUMMARY
               done
           fi
+          echo "Total Logs per device * Total Retrieved Devices = Total Logs "
+          echo "| Total Logs | $TOTAL_DEVICE_MONITOR_LOGS |" >> $GITHUB_STEP_SUMMARY
