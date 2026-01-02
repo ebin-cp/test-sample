@@ -70,10 +70,9 @@ export function teardown(data) {
     const bufferNS = 5000 * 1000000; 
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
     const adjustedStartNS = data.startTimeNS - bufferNS;
-
     const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
-    const perDeviceResults = []; // summary-ലേക്ക് അയക്കാൻ
-
+    const perDeviceResults = []; 
+    console.log(`[Teardown] Starting validation for ${data.keys.length} devices...`);
     data.keys.forEach((testDevice, index) => {
         const params = { 
             headers: { 
@@ -81,19 +80,16 @@ export function teardown(data) {
                 "Content-Type": "application/json"
             } 
         };
-
         let totalMessagesForThisDevice = 0;
-
         metricsToCheck.forEach((metric) => {
             const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=${metric}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
             const measRes = http.get(measUrl, params);
-
             let count = 0;
             if (measRes.status === 200) {
                 const body = measRes.json();
                 if (Array.isArray(body)) {
                     count = body.length;
-                    totalMessagesForThisDevice += count; // ടോട്ടൽ കൂട്ടി വെക്കുന്നു
+                    totalMessagesForThisDevice += count; 
                 }
             }
             check(measRes, {
@@ -101,11 +97,10 @@ export function teardown(data) {
             });
         });
         check(totalMessagesForThisDevice, {
-            [`Total Messages > 0 (Device ${index} - IMEI: ${testDevice.imei})`]: (val) => val > 0,
+            [`Total Messages Count for Device ${index}: ${totalMessagesForThisDevice}`]: (val) => val > 0,
         });
-
-        console.log(`[Info] Device ${testDevice.imei} total messages: ${totalMessagesForThisDevice}`);
-            perDeviceResults.push({
+        console.log(`[Info] Device ${testDevice.imei} total messages: ${totalMessagesForThisDevice}`); 
+        perDeviceResults.push({
             imei: testDevice.imei,
             total: totalMessagesForThisDevice
         });
@@ -115,6 +110,6 @@ export function teardown(data) {
 
 export function handleSummary(data) {
     return {
-        "summary.json": JSON.stringify(data),
+        "summary.json": JSON.stringify(data,null,4),
     }
 }
