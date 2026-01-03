@@ -44,10 +44,10 @@ export default function(data) {
         },
     }, (socket) => {
         socket.on("open", () => {
-            const interval = socket.setInterval(() => {
+            const intervalId = socket.setInterval(() => {
                 const now = Date.now();
+                
                 if (now - (startTimeNS / 1000000) > runTime) {
-                    socket.clearInterval(interval);
                     socket.close();
                     return;
                 }
