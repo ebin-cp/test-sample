@@ -79,3 +79,9 @@ export default function(data) {
         },
     });
 }
+
+export function handleSummary(data) {
+    return {
+        "summary.json": JSON.stringify(data, null, 4),
+    };
+}
