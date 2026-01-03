@@ -66,33 +66,23 @@ jobs:
 
       - name: Final Validation
         if: always()
-        env:
-          DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
-          DB_NAME: "${{secrets.DB_NAME}}"
         run: |
-          set +e 
-
-          # 1. Fetch baseline metrics safely
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json || echo "0")
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
+          
+          METRICS_PER_MSG=4
+          TOTAL_EXPECTED=$((WS_SENT * METRICS_PER_MSG))
           
           echo "### Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Logs in Database | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
-
-          # 2. Extract counts and handle empty results
-          ALL_COUNTS=$(jq -r '.root_group.checks[] | select(.name | contains("Total Messages Count")) | .name' summary.json 2>/dev/null | grep -oP '\d+$')          
-          if [ -z "$ALL_COUNTS" ]; then
-            echo "⚠️ No k6 checks found in summary.json" >> $GITHUB_STEP_SUMMARY
+          echo "| Total WS Batches Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Total Data Points ($WS_SENT * $METRICS_PER_MSG) | $TOTAL_EXPECTED |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actual Data Points in DB | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$TOTAL_EXPECTED" -eq "$TOTAL_DB_LOGS" ]; then
+            echo "✅ **All data points successfully stored!**" >> $GITHUB_STEP_SUMMARY
           else
-            EXPECTED_COUNT=$(echo "$ALL_COUNTS" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
-            echo "| Expected per device | $EXPECTED_COUNT |" >> $GITHUB_STEP_SUMMARY            
-            if [ "$WS_SENT" -gt 0 ] && [ "$TOTAL_DB_LOGS" -ge "$WS_SENT" ]; then
-               echo "✅ **Data Integrity: Success**" >> $GITHUB_STEP_SUMMARY
-            else
-               echo "❌ **Data Integrity: Mismatch Detected**" >> $GITHUB_STEP_SUMMARY
-            fi
+            DIFF=$((TOTAL_EXPECTED - TOTAL_DB_LOGS))
+            echo "❌ **Data Loss Detected! Missing $DIFF points.**" >> $GITHUB_STEP_SUMMARY
           fi
-          exit 0
