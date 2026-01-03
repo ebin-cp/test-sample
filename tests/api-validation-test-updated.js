@@ -34,7 +34,7 @@ export function setup() {
 export default function(data) {
     const myKey = data.keys[(__VU - 1) % data.keys.length];
     const url = "ws://localhost:8883/api/live";
-        const startTimeNS = Date.now() * 1000000; 
+    const startTimeNS = Date.now() * 1000000; 
     const runTime = 30000; // 30 Seconds
 
     const res = ws.connect(url, {
@@ -53,6 +53,7 @@ export default function(data) {
                 }
 
                 const ts = now * 1000000;
+                // ഇവിടെ ഒരു മെട്രിക് (volume) മാത്രമാണ് അയക്കുന്നത്
                 const payload = `volume,imei=${myKey.imei} vol=100 ${ts}`;
                 socket.send(payload);
                 ws_metrics_sent_msgs.add(1);
@@ -61,9 +62,9 @@ export default function(data) {
     });
 
     check(res, { "WS Connected": (r) => r && r.status === 101 });
-    sleep(2); 
+    sleep(5); 
+    
     const endTimeNS = Date.now() * 1000000;
-
     const params = { 
         headers: { "Authorization": `${myKey.api_key}`, "Content-Type": "application/json" } 
     };
@@ -71,12 +72,14 @@ export default function(data) {
     const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${myKey.imei}&measurement=volume&start_ns=${startTimeNS}&end_ns=${endTimeNS}`;
     const measRes = http.get(measUrl, params);
 
+    // --- Bash Script-ന് വേണ്ടിയുള്ള മാറ്റം ഇവിടെ തുടങ്ങുന്നു ---
+    const body = measRes.json();
+    const count = Array.isArray(body) ? body.length : 0;
+    const deviceIndex = (__VU - 1) % data.keys.length;
+
     check(measRes, {
         "API Status is 200": (r) => r.status === 200,
-        "New Data found in DB": (r) => {
-            const body = r.json();
-            return Array.isArray(body) && body.length > 0;
-        },
+        [`Total Messages Count for Device ${deviceIndex}: ${count}`]: () => count > 0,
     });
 }
 
