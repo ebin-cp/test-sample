@@ -5,7 +5,7 @@ import { check, fail, sleep } from "k6";
 import { Counter } from "k6/metrics";
 
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
-const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL);
+const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
 
 export const options = {
     vus: 50,
@@ -53,7 +53,6 @@ export default function(data) {
                 }
 
                 const ts = now * 1000000;
-                // ഇവിടെ ഒരു മെട്രിക് (volume) മാത്രമാണ് അയക്കുന്നത്
                 const payload = `volume,imei=${myKey.imei} vol=100 ${ts}`;
                 socket.send(payload);
                 ws_metrics_sent_msgs.add(1);
@@ -62,21 +61,17 @@ export default function(data) {
     });
 
     check(res, { "WS Connected": (r) => r && r.status === 101 });
-    sleep(5); 
-    
+    sleep(10); 
     const endTimeNS = Date.now() * 1000000;
     const params = { 
         headers: { "Authorization": `${myKey.api_key}`, "Content-Type": "application/json" } 
     };
-    
     const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${myKey.imei}&measurement=volume&start_ns=${startTimeNS}&end_ns=${endTimeNS}`;
     const measRes = http.get(measUrl, params);
 
-    // --- Bash Script-ന് വേണ്ടിയുള്ള മാറ്റം ഇവിടെ തുടങ്ങുന്നു ---
     const body = measRes.json();
     const count = Array.isArray(body) ? body.length : 0;
     const deviceIndex = (__VU - 1) % data.keys.length;
-
     check(measRes, {
         "API Status is 200": (r) => r.status === 200,
         [`Total Messages Count for Device ${deviceIndex}: ${count}`]: () => count > 0,
