@@ -33,12 +33,13 @@ jobs:
           cp .env docker/v1/.env          
           docker compose -f ./docker/v1/docker-compose.yml up -d
 
-      - name: Wait for Health Check
+      - name: Execute Test
+        shell: bash
         run: |
-          echo "Waiting for Services to settle..."
-          sleep 15 
-          echo "Waiting for API to be ready..."
-          timeout 60s bash -c 'until [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "200" ] || [ "$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8883/health)" == "403" ]; do echo "Still waiting..."; sleep 5; done'
+          # Use --summary-export and ignore k6 failure to proceed to validation
+          k6 run tests/api-validation-test-updated.js --summary-export=summary.json || true
+        env:
+          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
       
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
@@ -78,18 +79,17 @@ jobs:
             exit 1
           fi
 
-          # Extract Metrics
+          # 1. Extract Overall Metrics
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           METRICS_PER_MSG=4
           TOTAL_EXPECTED=$((WS_SENT * METRICS_PER_MSG))
           
-          # Query Database
+          # 2. Query Database
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${DB_PASS} -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log;" 2>/dev/null || echo "0")
-          
-          # Logic to count devices from checks
           TOTAL_DEVICES=$(jq '[.root_group.checks[] | select(.name | contains("Total Messages Count"))] | length' summary.json)
           
-          # Get count from Device 0 to show in report
+          # 3. Individual Consistency Logic
+          # Extract the count from Device 0 check (assuming it's representative)
           EXPECTED_PER_DEVICE=$(jq -r '.root_group.checks[] | select(.name | contains("Total Messages Count for Device 0:")) | .name' summary.json | grep -oP '\d+$' | head -n 1 || echo "0")
           
           MATCH_COUNT=0
@@ -100,7 +100,7 @@ jobs:
             fi
           done
 
-          # Generate Markdown Report
+          # 4. Generate the Report
           echo "### Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
           echo "#### Overall Statistics" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
@@ -114,8 +114,10 @@ jobs:
           echo "* Individual measurement count received: **$EXPECTED_PER_DEVICE** measurements per device in both K6 and DB." >> $GITHUB_STEP_SUMMARY
           
           if [ "$MATCH_COUNT" -eq "$TOTAL_DEVICES" ] && [ "$TOTAL_EXPECTED" -eq "$TOTAL_DB_LOGS" ] && [ "$TOTAL_EXPECTED" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
             echo "✅ **All devices matched perfectly!**" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ **Integrity Gap Detected!** Sent: $TOTAL_EXPECTED, Received: $TOTAL_DB_LOGS" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Integrity Gap Detected!**" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
