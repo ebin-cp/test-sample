@@ -9,7 +9,7 @@ const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
 
 export const options = {
     vus: 50,
-    duration: "1m30s",
+    duration: "30s",
 };
 
 export function setup() {

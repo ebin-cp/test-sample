@@ -103,4 +103,22 @@ jobs:
             fi
             INDEX=$((INDEX+1))
           done
+          echo "#### **Consistent Data Streams** (Matched)" >> $GITHUB_STEP_SUMMARY
+          echo "* **Matched Devices:** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
+          echo "* Individual measurement count received: **$EXPECTED_COUNT** measurements per device in both K6 and DB." >> $GITHUB_STEP_SUMMARY
           
+          if [ "$MISMATCH_COUNT" -gt 0 ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "#### **Measurement Integrity Gaps** (Mismatched)" >> $GITHUB_STEP_SUMMARY
+            echo "* **Mismatched Devices:** $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "* **Received total individual count:**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| API Count (k6) | DB Count (SQL) | No. of Devices |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            sort mismatches.txt | sed '/^\s*$/d' | uniq -c | sort -nr | while read count k6 db; do
+              echo "| $k6 | $db | $count |" >> $GITHUB_STEP_SUMMARY
+            done
+          else
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**All devices matched perfectly!**" >> $GITHUB_STEP_SUMMARY
+          fi
