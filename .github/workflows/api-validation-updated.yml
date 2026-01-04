@@ -86,3 +86,21 @@ jobs:
             DIFF=$((TOTAL_EXPECTED - TOTAL_DB_LOGS))
             echo "❌ **Data Loss Detected! Missing $DIFF points.**" >> $GITHUB_STEP_SUMMARY
           fi
+      
+          # Loop through IMEIs for consistency check
+          for id in $IMEI_LIST; do
+            K6_COUNT=$(jq -r --arg idx "$INDEX" '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | head -n 1 | grep -oP '\d+$' || echo "0")
+            DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
+  
+            K6_VAL=${K6_COUNT:-0}
+            DB_VAL=${DB_COUNT:-0}
+  
+            if [ "$K6_VAL" -eq "$EXPECTED_COUNT" ] && [ "$DB_VAL" -eq "$EXPECTED_COUNT" ]; then
+              MATCH_COUNT=$((MATCH_COUNT+1))
+            else
+              MISMATCH_COUNT=$((MISMATCH_COUNT+1))
+              echo "$K6_VAL $DB_VAL" >> mismatches.txt
+            fi
+            INDEX=$((INDEX+1))
+          done
+          
