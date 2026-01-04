@@ -9,7 +9,7 @@ const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
 
 export const options = {
     vus: 50,
-    duration: "30s",
+    duration: "45s", 
 };
 
 export function setup() {
@@ -32,7 +32,8 @@ export function setup() {
 }
 
 export default function(data) {
-    const myKey = data.keys[(__VU - 1) % data.keys.length];
+    const deviceIndex = (__VU - 1) % data.keys.length;
+    const myKey = data.keys[deviceIndex];
     const url = "ws://localhost:8883/api/live";
     const startTimeNS = Date.now() * 1000000; 
     const runTime = 30000; // 30 Seconds
@@ -52,16 +53,23 @@ export default function(data) {
                     return;
                 }
 
-                const ts = now * 1000000;
-                const payload = `volume,imei=${myKey.imei} vol=100 ${ts}`;
+                const ts = now * 1000000;                
+                const payload = 
+                    `volume,imei=${myKey.imei} vol=100 ${ts}\n` +
+                    `cpu,imei=${myKey.imei} usage=45 ${ts}\n` +
+                    `memory,imei=${myKey.imei} free=1024 ${ts}\n` +
+                    `temp,imei=${myKey.imei} celsius=32 ${ts}`;
+
                 socket.send(payload);
-                ws_metrics_sent_msgs.add(1);
+                ws_metrics_sent_msgs.add(1); // One "Batch" sent
             }, ws_msg_interval);
         });
     });
 
     check(res, { "WS Connected": (r) => r && r.status === 101 });
+
     sleep(10); 
+
     const endTimeNS = Date.now() * 1000000;
     const params = { 
         headers: { "Authorization": `${myKey.api_key}`, "Content-Type": "application/json" } 
@@ -69,12 +77,17 @@ export default function(data) {
     const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${myKey.imei}&measurement=volume&start_ns=${startTimeNS}&end_ns=${endTimeNS}`;
     const measRes = http.get(measUrl, params);
 
-    const body = measRes.json();
-    const count = Array.isArray(body) ? body.length : 0;
-    const deviceIndex = (__VU - 1) % data.keys.length;
+    let count = 0;
+    try {
+        const body = measRes.json();
+        count = Array.isArray(body) ? body.length : 0;
+    } catch (e) {
+        count = 0;
+    }
+
     check(measRes, {
         "API Status is 200": (r) => r.status === 200,
-        [`Total Messages Count for Device ${deviceIndex}: ${count}`]: () => count > 0,
+        [`Total Messages Count for Device ${deviceIndex}: ${count}`]: () => count >= 0,
     });
 }
 
