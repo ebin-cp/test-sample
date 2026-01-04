@@ -44,27 +44,33 @@ export default function(data) {
                     return;
                 }
                 const ts = Date.now() * 1000000;
-                // 4 metrics per message
-                const payload = `vol,imei=${myKey.imei} v=100 ${ts}\ncell,imei=${myKey.imei} r=-70 ${ts}\nfw,imei=${myKey.imei} v=1 ${ts}\nbat,imei=${myKey.imei} l=90 ${ts}`;
+                // Sending 4 lines (metrics) per message
+                const payload = `volume,imei=${myKey.imei} vol=100 ${ts}\ncellular,imei=${myKey.imei} rssi=-70 ${ts}\nfirmware,imei=${myKey.imei} ver=1 ${ts}\nbattery,imei=${myKey.imei} lvl=90 ${ts}`;
                 socket.send(payload);
                 ws_metrics_sent_msgs.add(1);
             }, ws_msg_interval);
         });
     });
 
-    sleep(40); // Wait for run + ingestion
+    // Wait for the 30s test duration + 10s for DB ingestion
+    sleep(40); 
 
-    const metrics = ["volume", "cellular", "firmware", "battery"];
-    let deviceTotal = 0;
-    metrics.forEach(m => {
-        const res = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${myKey.imei}&measurement=${m}`, 
-            { headers: { "Authorization": `${myKey.api_key}` } });
-        if (res.status === 200 && Array.isArray(res.json())) deviceTotal += res.json().length;
+    const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
+    let totalMessagesForThisDevice = 0;
+
+    metricsToCheck.forEach((metric) => {
+        const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${myKey.imei}&measurement=${metric}`;
+        const measRes = http.get(measUrl, { headers: { "Authorization": `${myKey.api_key}` } });
+        
+        if (measRes.status === 200) {
+            const body = measRes.json();
+            if (Array.isArray(body)) totalMessagesForThisDevice += body.length;
+        }
     });
 
-    // Name format critical for YAML parsing
-    check(deviceTotal, {
-        [`Total Messages Count for Device ${deviceIndex}: ${deviceTotal}`]: (v) => v > 0,
+    // The name ending in ${totalMessagesForThisDevice} is required for the YAML grep
+    check(totalMessagesForThisDevice, {
+        [`Total Messages Count for Device ${deviceIndex}: ${totalMessagesForThisDevice}`]: (v) => v > 0,
     });
 }
 
