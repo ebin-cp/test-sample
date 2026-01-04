@@ -70,7 +70,10 @@ jobs:
           DB_PASS: ${{ secrets.DB_ROOT_PASSWD }}
           DB_NAME: ${{ secrets.DB_NAME }}
         run: |
-          # 1. Extract Metrics from k6 summary
+          # Debug: Ensure summary.json exists
+          if [ ! -f summary.json ]; then echo "Error: summary.json not found"; exit 1; fi
+          
+          # 1. Extract Metrics - Using the correct path for k6 custom counters
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           METRICS_PER_MSG=4
           TOTAL_EXPECTED=$((WS_SENT * METRICS_PER_MSG))
@@ -79,19 +82,19 @@ jobs:
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${DB_PASS} -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log;" 2>/dev/null || echo "0")
           TOTAL_DEVICES=$(jq '[.root_group.checks[] | select(.name | contains("Total Messages Count"))] | length' summary.json)
           
-          # 3. Individual Consistency Logic
-          # Get expected count per device from the first device record found
-          EXPECTED_PER_DEVICE=$(jq -r '.root_group.checks[] | select(.name | contains("Total Messages Count for Device 0:")) | .name' summary.json | grep -oP '\d+$' || echo "0")
+          # 3. Individual Consistency
+          # Get expected count per device from the first device record (Device 0)
+          EXPECTED_PER_DEVICE=$(jq -r '.root_group.checks[] | select(.name | contains("Total Messages Count for Device 0:")) | .name' summary.json | grep -oP '\d+$' | head -n 1 || echo "0")
           
           MATCH_COUNT=0
           for i in $(seq 0 $((TOTAL_DEVICES - 1))); do
-            K6_VAL=$(jq -r --arg idx "$i" '.root_group.checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | grep -oP '\d+$' || echo "0")
+            K6_VAL=$(jq -r --arg idx "$i" '.root_group.checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | grep -oP '\d+$' | head -n 1 || echo "0")
             if [ "$K6_VAL" -eq "$EXPECTED_PER_DEVICE" ] && [ "$K6_VAL" -gt 0 ]; then
               MATCH_COUNT=$((MATCH_COUNT+1))
             fi
           done
 
-          # 4. Generate Markdown Report
+          # 4. Generate Report
           echo "### Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
           echo "#### Overall Statistics" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
@@ -107,6 +110,6 @@ jobs:
           if [ "$MATCH_COUNT" -eq "$TOTAL_DEVICES" ] && [ "$TOTAL_EXPECTED" -eq "$TOTAL_DB_LOGS" ] && [ "$TOTAL_EXPECTED" -gt 0 ]; then
             echo "✅ **All devices matched perfectly!**" >> $GITHUB_STEP_SUMMARY
           else
-            echo "❌ **Integrity Gap Detected!**" >> $GITHUB_STEP_SUMMARY
-            exit 1 # Fail the job if data is missing
+            echo "❌ **Integrity Gap Detected!** Check if WebSocket connections were successful." >> $GITHUB_STEP_SUMMARY
+            exit 1
           fi
