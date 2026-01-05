@@ -56,20 +56,45 @@ export default function(data) {
     // Wait for the ingestion to finish
     sleep(10);
 
-    const metrics = ["volume", "cellular", "firmware", "battery"];
-    let deviceTotal = 0;
-    metrics.forEach(m => {
-        const r = http.get(`http://localhost:8883/api/v1/device/measurements?imei=${myKey.imei}&measurement=${m}`, 
-            { headers: { "Authorization": `${myKey.api_key}` } });
-        if (r.status === 200) {
-            const body = r.json();
-            if (Array.isArray(body)) deviceTotal += body.length;
-        }
-    });
-
-    check(deviceTotal, {
-        [`Total Messages Count for Device ${deviceIndex}: ${deviceTotal}`]: (v) => v > 0,
-    });
+    const bufferNS = 5000 * 1000000; 
+        const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
+        const adjustedStartNS = data.startTimeNS - bufferNS;
+        const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
+        const perDeviceResults = []; 
+        console.log(`[Teardown] Starting validation for ${data.keys.length} devices...`);
+        data.keys.forEach((testDevice, index) => {
+            const params = { 
+                headers: { 
+                    "Authorization": `${testDevice.api_key}`,
+                    "Content-Type": "application/json"
+                } 
+            };
+            let totalMessagesForThisDevice = 0;
+            metricsToCheck.forEach((metric) => {
+                const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${testDevice.imei}&measurement=${metric}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
+                const measRes = http.get(measUrl, params);
+                let count = 0;
+                if (measRes.status === 200) {
+                    const body = measRes.json();
+                    if (Array.isArray(body)) {
+                        count = body.length;
+                        totalMessagesForThisDevice += count; 
+                    }
+                }
+                check(measRes, {
+                    [`${metric} Data Exists (Device ${index})`]: () => count > 0,
+                });
+            });
+            check(totalMessagesForThisDevice, {
+                [`Total Messages Count for Device ${index}: ${totalMessagesForThisDevice}`]: (val) => val > 0,
+            });
+            console.log(`[Info] Device ${testDevice.imei} total messages: ${totalMessagesForThisDevice}`); 
+            perDeviceResults.push({
+                imei: testDevice.imei,
+                total: totalMessagesForThisDevice
+            });
+        });
+        return { results: perDeviceResults };
 }
 
 export function handleSummary(data) {

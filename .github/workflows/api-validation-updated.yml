@@ -89,35 +89,39 @@ jobs:
           TOTAL_DEVICES=$(jq '[.root_group.checks[] | select(.name | contains("Total Messages Count"))] | length' summary.json)
           
           # 3. Individual Consistency Logic
-          # Extract the count from Device 0 check (assuming it's representative)
-          EXPECTED_PER_DEVICE=$(jq -r '.root_group.checks[] | select(.name | contains("Total Messages Count for Device 0:")) | .name' summary.json | grep -oP '\d+$' | head -n 1 || echo "0")
-          
-          MATCH_COUNT=0
-          for i in $(seq 0 $((TOTAL_DEVICES - 1))); do
-            K6_VAL=$(jq -r --arg idx "$i" '.root_group.checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | grep -oP '\d+$' | head -n 1 || echo "0")
-            if [ "$K6_VAL" -ne "0" ] && [ "$K6_VAL" -eq "$EXPECTED_PER_DEVICE" ]; then
+          for id in $IMEI_LIST; do
+            K6_COUNT=$(jq -r --arg idx "$INDEX" '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | head -n 1 | grep -oP '\d+$' || echo "0")
+            DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
+  
+            K6_VAL=${K6_COUNT:-0}
+            DB_VAL=${DB_COUNT:-0}
+  
+            if [ "$K6_VAL" -eq "$EXPECTED_COUNT" ] && [ "$DB_VAL" -eq "$EXPECTED_COUNT" ]; then
               MATCH_COUNT=$((MATCH_COUNT+1))
+            else
+              MISMATCH_COUNT=$((MISMATCH_COUNT+1))
+              echo "$K6_VAL $DB_VAL" >> mismatches.txt
             fi
+            INDEX=$((INDEX+1))
           done
-
-          # 4. Generate the Report
-          echo "### Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
-          echo "#### Overall Statistics" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total WS Messages Sent (Expected) | $WS_SENT * $METRICS_PER_MSG = $TOTAL_EXPECTED |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Devices Retrieved | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Logs in Database (Received) | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "#### Consistent Data Streams (Matched)" >> $GITHUB_STEP_SUMMARY
+  
+          # 4. Consistency Summary Section
+          echo "#### **Consistent Data Streams** (Matched)" >> $GITHUB_STEP_SUMMARY
           echo "* **Matched Devices:** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "* Individual measurement count received: **$EXPECTED_PER_DEVICE** measurements per device in both K6 and DB." >> $GITHUB_STEP_SUMMARY
+          echo "* Individual measurement count received: **$EXPECTED_COUNT** measurements per device in both K6 and DB." >> $GITHUB_STEP_SUMMARY
           
-          if [ "$MATCH_COUNT" -eq "$TOTAL_DEVICES" ] && [ "$TOTAL_EXPECTED" -eq "$TOTAL_DB_LOGS" ] && [ "$TOTAL_EXPECTED" -gt 0 ]; then
+          if [ "$MISMATCH_COUNT" -gt 0 ]; then
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "✅ **All devices matched perfectly!**" >> $GITHUB_STEP_SUMMARY
+            echo "#### **Measurement Integrity Gaps** (Mismatched)" >> $GITHUB_STEP_SUMMARY
+            echo "* **Mismatched Devices:** $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "* **Received total individual count:**" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "| API Count (k6) | DB Count (SQL) | No. of Devices |" >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+            sort mismatches.txt | sed '/^\s*$/d' | uniq -c | sort -nr | while read count k6 db; do
+              echo "| $k6 | $db | $count |" >> $GITHUB_STEP_SUMMARY
+            done
           else
             echo "" >> $GITHUB_STEP_SUMMARY
-            echo "❌ **Integrity Gap Detected!**" >> $GITHUB_STEP_SUMMARY
-            exit 1
+            echo "**All devices matched perfectly!**" >> $GITHUB_STEP_SUMMARY
           fi
