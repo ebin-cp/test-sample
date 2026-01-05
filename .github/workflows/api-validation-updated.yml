@@ -73,9 +73,8 @@ jobs:
           DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
           DB_NAME: "${{secrets.DB_NAME}}"
         run: |
-          # 1. Fetch baseline metrics
+          # 1. Baseline metrics
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-          # Variable name kept consistent as TOTAL_DEVICES
           TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "0")
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
           
@@ -89,11 +88,10 @@ jobs:
           echo "| Total Logs in Database (Received)| $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
   
-          # 2. Identify Expected Count
-          ALL_COUNTS=$(jq -r '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count")) | .name' summary.json | grep -oP '\d+$')
+          # 2. To find the expected count (Most common count in K6 checks)
+          ALL_COUNTS=$(jq -r '.root_group.checks[] | select(.name | contains("Total Messages Count")) | .name' summary.json | grep -oP '\d+$')
           EXPECTED_COUNT=$(echo "$ALL_COUNTS" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
   
-          # Fix: Using $TOTAL_DEVICES correctly and avoiding divide by zero
           if [ -z "$EXPECTED_COUNT" ] || [ "$EXPECTED_COUNT" -eq 0 ]; then
             if [ "$TOTAL_DEVICES" -gt 0 ]; then
               EXPECTED_COUNT=$((WS_SENT / TOTAL_DEVICES))
@@ -106,12 +104,15 @@ jobs:
           MISMATCH_COUNT=0
           echo "" > mismatches.txt
   
+          # 3. Checking indvidual IMEI
           IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
           INDEX=0
           
-          # 3. Loop through IMEIs for consistency check
           for id in $IMEI_LIST; do
-            K6_COUNT=$(jq -r --arg idx "$INDEX" '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | head -n 1 | grep -oP '\d+$' || echo "0")
+            # K6 Count fetching from .root_group.checks
+            K6_COUNT=$(jq -r --arg idx "$INDEX" '.root_group.checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | head -n 1 | grep -oP '\d+$' || echo "0")
+            
+            # DB Count fetching
             DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
   
             K6_VAL=${K6_COUNT:-0}
@@ -126,7 +127,7 @@ jobs:
             INDEX=$((INDEX+1))
           done
   
-          # 4. Consistency Summary Section
+          # 4. Final Consistency Report Generation
           echo "#### **Consistent Data Streams** (Matched)" >> $GITHUB_STEP_SUMMARY
           echo "* **Matched Devices:** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
           echo "* Individual measurement count received: **$EXPECTED_COUNT** measurements per device in both K6 and DB." >> $GITHUB_STEP_SUMMARY
