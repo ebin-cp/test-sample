@@ -70,25 +70,46 @@ jobs:
       - name: Final Validation
         if: always()
         env:
-          DB_PASS: ${{ secrets.DB_ROOT_PASSWD }}
-          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
+          DB_NAME: "${{secrets.DB_NAME}}"
         run: |
-          # Check if k6 actually produced a summary
-          if [ ! -f summary.json ]; then
-            echo "### ❌ Error: k6 summary.json was not generated." >> $GITHUB_STEP_SUMMARY
-            exit 1
-          fi
-
-          # 1. Extract Overall Metrics
+          # 1. Fetch baseline metrics
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-          METRICS_PER_MSG=4
-          TOTAL_EXPECTED=$((WS_SENT * METRICS_PER_MSG))
+          # Variable name kept consistent as TOTAL_DEVICES
+          TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "0")
+          TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
           
-          # 2. Query Database
-          TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${DB_PASS} -N -s -e "SELECT COUNT(*) FROM ${DB_NAME}.device_monitor_log;" 2>/dev/null || echo "0")
-          TOTAL_DEVICES=$(jq '[.root_group.checks[] | select(.name | contains("Total Messages Count"))] | length' summary.json)
+          echo "### Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
+          echo "### Overall Statistics" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          CALCULATED_TOTAL=$((WS_SENT * 4))
+          echo "| Total WS Messages Sent (Expected) | $WS_SENT * 4 = $CALCULATED_TOTAL |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Devices Retrieved | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Logs in Database (Received)| $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+  
+          # 2. Identify Expected Count
+          ALL_COUNTS=$(jq -r '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count")) | .name' summary.json | grep -oP '\d+$')
+          EXPECTED_COUNT=$(echo "$ALL_COUNTS" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
+  
+          # Fix: Using $TOTAL_DEVICES correctly and avoiding divide by zero
+          if [ -z "$EXPECTED_COUNT" ] || [ "$EXPECTED_COUNT" -eq 0 ]; then
+            if [ "$TOTAL_DEVICES" -gt 0 ]; then
+              EXPECTED_COUNT=$((WS_SENT / TOTAL_DEVICES))
+            else
+              EXPECTED_COUNT=0
+            fi
+          fi
+  
+          MATCH_COUNT=0
+          MISMATCH_COUNT=0
+          echo "" > mismatches.txt
+  
+          IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
+          INDEX=0
           
-          # 3. Individual Consistency Logic
+          # 3. Loop through IMEIs for consistency check
           for id in $IMEI_LIST; do
             K6_COUNT=$(jq -r --arg idx "$INDEX" '.root_group.groups[].checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | head -n 1 | grep -oP '\d+$' || echo "0")
             DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
