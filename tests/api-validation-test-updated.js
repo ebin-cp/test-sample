@@ -23,24 +23,29 @@ export function setup() {
     const deviceKeys = [];
     
     for (let i = 0; i < 50; i++) {
-        const imei = ulid.ulid();
+        const testImei = `TEST_IMEI_${ulid.ulid()}`; // തൽക്കാലം തിരിച്ചറിയാൻ ഒരു പ്രീഫിക്സ്
+        const payload = JSON.stringify({ 
+            imei: testImei,
+            deviceId: `DEV_${ulid.ulid().substring(0, 10)}`, // ചിലപ്പോൾ ഇത് ആവശ്യമായിരിക്കും
+            presence: "online"
+        });
+
         const res = http.post("http://localhost:8883/api/v1/device", 
-            JSON.stringify({ imei }), 
+            payload, 
             { headers: { "Content-Type": "application/json" } }
         );
         
-        if (res.status === 200) {
+        if (res.status === 200 || res.status === 201) {
             const d = res.json();
-            // API റെസ്പോൺസ് { key: "..." } ആണോ എന്ന് ഉറപ്പിക്കുക
-            const apiKey = d.key && typeof d.key === 'object' ? d.key.key : d.key;
+            // API key എടുക്കുന്ന രീതി ഒന്നുകൂടി സേഫ് ആക്കുന്നു
+            const apiKey = d.key && d.key.key ? d.key.key : (d.key ? d.key : null);
             
             if (apiKey) {
-                deviceKeys.push({ api_key: apiKey, imei: imei });
-            } else {
-                console.warn(`⚠️ Warning: No key found in response for IMEI ${imei}`);
+                deviceKeys.push({ api_key: apiKey, imei: testImei });
             }
         } else {
-            console.error(`❌ Setup Failed for device ${i}: Status ${res.status}`);
+            // 400 എറർ വന്നാൽ ബോഡിയിൽ എന്താണ് മെസ്സേജ് എന്ന് ലോഗ് ചെയ്യുക
+            console.error(`❌ Setup Failed for device ${i}: Status ${res.status}. Response: ${res.body}`);
         }
     }
     
