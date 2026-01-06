@@ -1,7 +1,7 @@
 import http from "k6/http";
 import { sleep } from "k6";
-import { sendWsMetrics } from "./websocket/ws_test.js";
-import { validateApiMeasurements } from "./api/api_test.js";
+import { sendWsMetrics } from "./websocket/ws-test.js";
+import { validateApiMeasurements } from "./api/api-test.js";
 
 export const options = {
     scenarios: {
