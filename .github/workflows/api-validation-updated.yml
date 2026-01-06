@@ -58,6 +58,7 @@ jobs:
             summary.json
             app_logs.txt
             mysql_logs.txt
+            mismatches.txt
 
       - name: Final Validation
         if: always()
@@ -86,10 +87,9 @@ jobs:
           echo "### Overall Statistics" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total WS Batches Sent (k6) | $WS_SENT_COUNT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Expected Total Logs ($WS_SENT_COUNT * 4) | $EXPECTED_TOTAL_LOGS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Actual Logs in Database | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Devices Tested | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total WS Messages Sent (Expected) ($WS_SENT_COUNT * 4) | $EXPECTED_TOTAL_LOGS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Devices Retrieved | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Logs in Database (Received) | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
           echo "| Expected Logs Per Device | $EXPECTED_PER_DEVICE |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
