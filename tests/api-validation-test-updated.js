@@ -8,9 +8,14 @@ const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
 const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
 
 export const options = {
-    vus: 50,
-    duration: "1m",
-    gracefulStop: "45s", 
+    scenarios: {
+        default: {
+            executor: 'constant-vus',
+            vus: 50,
+            duration: '1m',
+            gracefulStop: '30s', // ഇത് ശരിയായ രീതി
+        },
+    },
 };
 
 export function setup() {
@@ -26,13 +31,16 @@ export function setup() {
         
         if (res.status === 200) {
             const d = res.json();
-            // നിങ്ങളുടെ API റെസ്പോൺസ് { key: "..." } എന്നാണോ അതോ { key: { key: "..." } } എന്നാണോ എന്ന് നോക്കുക
-            // മിക്കവാറും d.key ആയിരിക്കും ശരി.
-            const apiKey = (typeof d.key === 'object') ? d.key.key : d.key;
+            // API റെസ്പോൺസ് { key: "..." } ആണോ എന്ന് ഉറപ്പിക്കുക
+            const apiKey = d.key && typeof d.key === 'object' ? d.key.key : d.key;
             
             if (apiKey) {
                 deviceKeys.push({ api_key: apiKey, imei: imei });
+            } else {
+                console.warn(`⚠️ Warning: No key found in response for IMEI ${imei}`);
             }
+        } else {
+            console.error(`❌ Setup Failed for device ${i}: Status ${res.status}`);
         }
     }
     
@@ -41,19 +49,14 @@ export function setup() {
 }
 
 export default function(data) {
-    // 1. SAFETY CHECK
-    if (!data || !data.keys || data.keys.length === 0) {
-        return; 
-    }
+    if (!data || !data.keys || data.keys.length === 0) return;
 
     const index = (__VU - 1) % data.keys.length;
     const myKey = data.keys[index];
-
-    if (!myKey || !myKey.imei) return;
+    if (!myKey) return;
 
     const url = "ws://localhost:8883/api/live";
 
-    // 2. WS CONNECT & SEND DATA
     const res = ws.connect(url, {
         headers: {
             Origin: "robad.in",
@@ -69,7 +72,6 @@ export default function(data) {
                     `firmware,imei=${myKey.imei} ver=1.0 ${ts}`,
                     `battery,imei=${myKey.imei} v=12 ${ts}`
                 ].join("\n");
-
                 socket.send(payload);
                 ws_metrics_sent_msgs.add(1);
             }, ws_msg_interval);
@@ -78,47 +80,26 @@ export default function(data) {
 
     check(res, { "WS Connected": (r) => r && r.status === 101 });
 
-    // ഇവിടെ വാലിഡേഷൻ നടക്കാൻ അല്പം സമയം നൽകണം
-    sleep(40); 
+    sleep(45); // ഡാറ്റ സേവ് ആകാൻ സമയം നൽകുന്നു
 
+    const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
     const bufferNS = 5000 * 1000000;
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
     const adjustedStartNS = data.startTimeNS - bufferNS;
-    const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
-    
-    const params = { 
-        headers: { 
-            "Authorization": `${myKey.api_key}`,
-            "Content-Type": "application/json"
-        } 
-    };
 
-    let totalMessagesForThisDevice = 0;
     metricsToCheck.forEach((metric) => {
         const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${myKey.imei}&measurement=${metric}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
-        const measRes = http.get(measUrl, params);
+        const measRes = http.get(measUrl, { headers: { "Authorization": `${myKey.api_key}` } });
         
         let count = 0;
         if (measRes.status === 200) {
             const body = measRes.json();
-            if (Array.isArray(body)) {
-                count = body.length;
-                totalMessagesForThisDevice += count;
-            }
+            count = Array.isArray(body) ? body.length : 0;
         }
-        
-        check(measRes, {
-            [`${metric} Data Saved (Device ${myKey.imei})`]: (r) => r.status === 200 && count > 0,
-        });
-    });
-
-    check(totalMessagesForThisDevice, {
-        [`Total DB Records for Device ${index} > 0`]: (val) => val > 0,
+        check(measRes, { [`${metric} Data Saved`]: () => count > 0 });
     });
 }
 
 export function handleSummary(data) {
-    return {
-        "summary.json": JSON.stringify(data, null, 4),
-    };
+    return { "summary.json": JSON.stringify(data, null, 4) };
 }
