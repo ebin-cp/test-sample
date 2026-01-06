@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 import { INFLUX_LINE_PROTOCOL_PARSED } from "../types/message.js";
+import z from "zod";
 const influx_line_protocol_parser = (msg) => {
-    const d = spawn("/bin/bash", ["-c", `libs/line_decoder '${msg}'`]);
+    if (!msg) {
+        reject({ res: [], err: new Error("Invalid message") });
+    }
+    const d = spawn("libs/line_decoder", [msg], {
+        shell: false,
+    });
     return new Promise((resolve, reject) => {
         d.stdout.on("data", (data) => {
             const res = data.toString();
@@ -13,6 +19,7 @@ const influx_line_protocol_parser = (msg) => {
             const res_json = JSON.parse(res);
             const validate = INFLUX_LINE_PROTOCOL_PARSED.array().safeParse(res_json);
             if (validate.error) {
+                console.error(validate.error.message);
                 reject({ res: [], err: new Error(validate.error.message) });
                 return;
             }

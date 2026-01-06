@@ -15,7 +15,7 @@ A real-time IoT data collection server that accepts device connections via WebSo
 
 - Docker
 - Docker Compose
-- .env file
+- .env file at docker/v1/
   ```
   DATABASE_ROOT_PASSWORD=<Root Database Password>
   DATABASE_USER=<Database Username>
@@ -53,11 +53,8 @@ Register a new device and receive an API key.
 
 ```json
 {
-    "result": "success",
-    "key": {
-        "key": "<api-key",
-        "created_at": "<timestamp>"
-    }
+    "key": "<api-key",
+    "created_at": "<timestamp>"
 }
 ```
 
@@ -82,8 +79,13 @@ const ws = new WebSocket('ws://localhost:8883/api/live', {
   }
 });
 
-// Send data in InfluxDB line protocol
+// Send measurements in InfluxDB line protocol
 ws.send('temperature,device=sensor1 value=23.5 1609459200000000000');
+
+// Send device directives in this schema (ACTION:TARGET:VERSION or ID) to recieve data from server 
+// Current supported values or regex ^(GET|SYNC):(CALIBRATION|FIRMWARE):[a-zA-Z0-9._-]+$
+ws.send('SYNC:CALIBRATION:volume');
+ws.send('GET:FIRMWARE:latest'); // not implemented yet.
 ```
 
 **InfluxDB Line Protocol Format**:
@@ -125,11 +127,36 @@ Retrieve a list of all registered devices.
 
 **Endpoint**: `GET http://localhost:8883/api/v1/device`
 
-**Example**:
+### 5. Assign Truck To Device
 
+Retrieve a list of all registered devices.
+
+**Endpoint**: `PUT http://localhost:8883/api/v1/device/assign-truck`
+
+**Query Parameters**:
+
+- `imei` (required): Device IMEI
+
+**Request Body**:
+
+```json
+{
+    "truck_reg_no":"<Truck Registration Number>",
+    "truck_tank_volume":"<Truck Volume in integer>",
+    "truck_tank_volume_mapping":"<Truck Volume Mapping in csv format>", // "1,100.2\n2,200.2\n"
+}
 ```
-http://localhost:8883/api/v1/device
-```
+
+### 6. De-Assign Truck To Device
+
+Retrieve a list of all registered devices.
+
+**Endpoint**: `PUT http://localhost:8883/api/v1/device/deassign-truck`
+
+**Query Parameters**:
+
+- `imei` (required): Device IMEI
+
 
 ## Timestamp Format
 

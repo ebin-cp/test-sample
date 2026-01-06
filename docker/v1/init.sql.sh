@@ -11,7 +11,6 @@ CREATE TABLE IF NOT EXISTS devices (
     imei VARCHAR(50) UNIQUE NOT NULL,
     presence VARCHAR(100) NOT NULL,
     api_keys JSON,
-    tags JSON,
     fields JSON,
     created_at BIGINT NOT NULL,
     modified_at BIGINT NOT NULL
