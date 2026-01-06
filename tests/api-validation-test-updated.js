@@ -10,7 +10,7 @@ const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
 export const options = {
     vus: 50,
     duration: "1m",
-    gracefulStop: "45s", // CRITICAL: This allows the 30s sleep + API calls to finish
+    gracefulStop: "45s", 
 };
 
 export function setup() {
@@ -62,9 +62,7 @@ export default function(data) {
 
     check(res, { "WS Connected": (r) => r && r.status === 101 });
 
-    // 2. VALIDATION AFTER WS CLOSES (Wait for DB to sync)
     sleep(35); 
-
     const bufferNS = 5000 * 1000000;
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
     const adjustedStartNS = data.startTimeNS - bufferNS;
