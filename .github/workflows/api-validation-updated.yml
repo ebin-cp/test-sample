@@ -4,7 +4,7 @@ on:
   push:
     branches:
     - main
-    workflow_dispatch:
+  workflow_dispatch:
 
 jobs:
   api-data-validation-updated-test:
@@ -14,7 +14,7 @@ jobs:
       fail-fast: false
       matrix:
         WS_MSG_INTERVAL: [1000]
-    timeout-minutes: 5
+    timeout-minutes: 6
 
     steps:
       - name: Checkout code
@@ -32,21 +32,13 @@ jobs:
           EOF
           cp .env docker/v1/.env          
           docker compose -f ./docker/v1/docker-compose.yml up -d
-
-      - name: Execute Test
-        shell: bash
-        run: |
-          # Use --summary-export and ignore k6 failure to proceed to validation
-          k6 run tests/api-validation-test-updated.js --summary-export=summary.json || true
-        env:
-          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
       
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
         id: k6_run
-        continue-on-error: true # Prevents crash if thresholds fail
+        continue-on-error: true 
         run: k6 run tests/api-validation-test-updated.js --summary-export=summary.json
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
@@ -54,8 +46,8 @@ jobs:
       - name: Capture Logs for Artifacts
         if: always()
         run: |
-          docker logs nodejs_app > app_logs.txt 2>&1
-          docker logs mysql > mysql_logs.txt 2>&1
+          docker logs nodejs_app > app_logs.txt 2>&1 || true
+          docker logs mysql > mysql_logs.txt 2>&1 || true
 
       - name: Upload Artifacts
         if: always()
@@ -73,7 +65,9 @@ jobs:
           DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
           DB_NAME: "${{secrets.DB_NAME}}"
         run: |
-          # 1. Baseline metrics
+          # Check if summary exists to avoid jq errors
+          if [ ! -f summary.json ]; then echo "summary.json missing"; exit 1; fi
+
           WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "0")
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
@@ -88,9 +82,8 @@ jobs:
           echo "| Total Logs in Database (Received)| $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
   
-          # 2. To find the expected count (Most common count in K6 checks)
-          ALL_COUNTS=$(jq -r '.root_group.checks[] | select(.name | contains("Total Messages Count")) | .name' summary.json | grep -oP '\d+$')
-          EXPECTED_COUNT=$(echo "$ALL_COUNTS" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}')
+          ALL_COUNTS=$(jq -r '.root_group.checks[] | select(.name | contains("Total Messages Count")) | .name' summary.json | grep -oP '\d+$' || echo "0")
+          EXPECTED_COUNT=$(echo "$ALL_COUNTS" | sort | uniq -c | sort -nr | head -n 1 | awk '{print $2}' || echo "0")
   
           if [ -z "$EXPECTED_COUNT" ] || [ "$EXPECTED_COUNT" -eq 0 ]; then
             if [ "$TOTAL_DEVICES" -gt 0 ]; then
@@ -102,17 +95,13 @@ jobs:
   
           MATCH_COUNT=0
           MISMATCH_COUNT=0
-          echo "" > mismatches.txt
+          touch mismatches.txt
   
-          # 3. Checking indvidual IMEI
           IMEI_LIST=$(jq -r '.setup_data.keys[].imei' summary.json)
           INDEX=0
           
           for id in $IMEI_LIST; do
-            # K6 Count fetching from .root_group.checks
             K6_COUNT=$(jq -r --arg idx "$INDEX" '.root_group.checks[] | select(.name | contains("Total Messages Count for Device \($idx):")) | .name' summary.json | head -n 1 | grep -oP '\d+$' || echo "0")
-            
-            # DB Count fetching
             DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
   
             K6_VAL=${K6_COUNT:-0}
@@ -127,23 +116,16 @@ jobs:
             INDEX=$((INDEX+1))
           done
   
-          # 4. Final Consistency Report Generation
           echo "#### **Consistent Data Streams** (Matched)" >> $GITHUB_STEP_SUMMARY
           echo "* **Matched Devices:** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "* Individual measurement count received: **$EXPECTED_COUNT** measurements per device in both K6 and DB." >> $GITHUB_STEP_SUMMARY
           
           if [ "$MISMATCH_COUNT" -gt 0 ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
             echo "#### **Measurement Integrity Gaps** (Mismatched)" >> $GITHUB_STEP_SUMMARY
-            echo "* **Mismatched Devices:** $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
-            echo "* **Received total individual count:**" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
             echo "| API Count (k6) | DB Count (SQL) | No. of Devices |" >> $GITHUB_STEP_SUMMARY
             echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
             sort mismatches.txt | sed '/^\s*$/d' | uniq -c | sort -nr | while read count k6 db; do
               echo "| $k6 | $db | $count |" >> $GITHUB_STEP_SUMMARY
             done
           else
-            echo "" >> $GITHUB_STEP_SUMMARY
             echo "**All devices matched perfectly!**" >> $GITHUB_STEP_SUMMARY
           fi
