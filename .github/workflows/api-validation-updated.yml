@@ -49,17 +49,6 @@ jobs:
           docker logs nodejs_app > app_logs.txt 2>&1 || true
           docker logs mysql > mysql_logs.txt 2>&1 || true
 
-      - name: Upload Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: api-validation-test-${{ matrix.WS_MSG_INTERVAL }}
-          path: |
-            summary.json
-            app_logs.txt
-            mysql_logs.txt
-            mismatches.txt
-
       - name: Final Validation
         if: always()
         env:
@@ -115,7 +104,18 @@ jobs:
           if [ "$MISMATCH_COUNT" -eq 0 ] && [ "$TOTAL_DB_LOGS" -eq "$EXPECTED_TOTAL_LOGS" ]; then
             echo " **SUCCESS:** All data streams are consistent. Every device has exactly $EXPECTED_PER_DEVICE logs." >> $GITHUB_STEP_SUMMARY
           else
-            echo " **WARNING:** Data inconsistency detected!" >> $GITHUB_STEP_SUMMARY
+            echo " **Failed:** Data inconsistency detected!" >> $GITHUB_STEP_SUMMARY
             echo "* **Matched Devices:** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
             echo "* **Mismatched Devices:** $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
           fi
+      
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-validation-test-${{ matrix.WS_MSG_INTERVAL }}
+          path: |
+            summary.json
+            app_logs.txt
+            mysql_logs.txt
+            mismatches.txt
