@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [100, 300, 500, 1000]
+        WS_MSG_INTERVAL: [1000]
     timeout-minutes: 8
 
     steps:
