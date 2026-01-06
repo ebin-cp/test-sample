@@ -13,7 +13,7 @@ export const options = {
             executor: 'constant-vus',
             vus: 50,
             duration: '1m',
-            gracefulStop: '30s', // ഇത് ശരിയായ രീതി
+            gracefulStop: '30s', 
         },
     },
 };
@@ -22,12 +22,18 @@ export function setup() {
     const startTimeNS = Date.now() * 1000000;
     const deviceKeys = [];
     
+    const generateIMEI = () => {
+        let imei = "";
+        for (let i = 0; i < 15; i++) {
+            imei += Math.floor(Math.random() * 10).toString();
+        }
+        return imei;
+    };
+
     for (let i = 0; i < 50; i++) {
-        const testImei = `TEST_IMEI_${ulid.ulid()}`; // തൽക്കാലം തിരിച്ചറിയാൻ ഒരു പ്രീഫിക്സ്
+        const imei = generateIMEI(); 
         const payload = JSON.stringify({ 
-            imei: testImei,
-            deviceId: `DEV_${ulid.ulid().substring(0, 10)}`, // ചിലപ്പോൾ ഇത് ആവശ്യമായിരിക്കും
-            presence: "online"
+            imei: imei
         });
 
         const res = http.post("http://localhost:8883/api/v1/device", 
@@ -37,15 +43,13 @@ export function setup() {
         
         if (res.status === 200 || res.status === 201) {
             const d = res.json();
-            // API key എടുക്കുന്ന രീതി ഒന്നുകൂടി സേഫ് ആക്കുന്നു
             const apiKey = d.key && d.key.key ? d.key.key : (d.key ? d.key : null);
             
             if (apiKey) {
-                deviceKeys.push({ api_key: apiKey, imei: testImei });
+                deviceKeys.push({ api_key: apiKey, imei: imei });
             }
         } else {
-            // 400 എറർ വന്നാൽ ബോഡിയിൽ എന്താണ് മെസ്സേജ് എന്ന് ലോഗ് ചെയ്യുക
-            console.error(`❌ Setup Failed for device ${i}: Status ${res.status}. Response: ${res.body}`);
+            console.error(`❌ Setup Failed for device ${i}: Status ${res.status}. Body: ${res.body}`);
         }
     }
     
