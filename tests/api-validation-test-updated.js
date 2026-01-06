@@ -33,11 +33,24 @@ export function setup() {
 }
 
 export default function(data) {
+    // --- 1. SAFETY CHECK (ഇതാണ് പുതിയ മാറ്റം) ---
+    if (!data || !data.keys || data.keys.length === 0) {
+        console.error("❌ ERROR: No device keys found in setup data. Database might be empty.");
+        return; // ഡാറ്റ ഇല്ലെങ്കിൽ ഇവിടെ വെച്ച് ടെസ്റ്റ് നിർത്തും, ക്രാഷ് ആകില്ല.
+    }
+
     const index = (__VU - 1) % data.keys.length;
     const myKey = data.keys[index];
+
+    // myKey ഉണ്ടോ എന്ന് ഉറപ്പുവരുത്തുക
+    if (!myKey || !myKey.imei) {
+        console.error(`❌ ERROR: VU ${__VU} could not find imei for index ${index}`);
+        return;
+    }
+
     const url = "ws://localhost:8883/api/live";
 
-    // 1. WS CONNECT & SEND DATA
+    // --- 2. WS CONNECT & SEND DATA ---
     const res = ws.connect(url, {
         headers: {
             Origin: "robad.in",
@@ -63,6 +76,7 @@ export default function(data) {
     check(res, { "WS Connected": (r) => r && r.status === 101 });
 
     sleep(35); 
+
     const bufferNS = 5000 * 1000000;
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
     const adjustedStartNS = data.startTimeNS - bufferNS;
@@ -88,8 +102,10 @@ export default function(data) {
                 totalMessagesForThisDevice += count;
             }
         }
+        
+        // ഇവിടെ check ചെയ്യുന്നതിൽ മാറ്റം വരുത്തി (error ഒഴിവാക്കാൻ)
         check(measRes, {
-            [`${metric} Data Exists (Device ${index})`]: () => count > 0,
+            [`${metric} Data Exists (Device ${index})`]: (r) => r.status === 200 && count > 0,
         });
     });
 
