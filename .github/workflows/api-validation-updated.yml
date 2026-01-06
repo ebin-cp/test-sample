@@ -67,60 +67,55 @@ jobs:
         run: |
           if [ ! -f summary.json ]; then echo "summary.json missing"; exit 1; fi
 
-          # Improved jq query to handle potential nulls
-          WS_SENT=$(jq -r '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
-          
-          # If WS_SENT is still 0, try to calculate it from the total DB logs as a fallback 
-          # to see if the counter was the only thing that failed.
+          # 1. Get stats from JSON and DB
+          WS_SENT_COUNT=$(jq -r '.metrics.ws_metrics_sent_msgs.count // 0' summary.json)
           TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "0")
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
           
-          # Logic to determine Expected Count per device
-          # Since you have 17800 logs and 50 devices, 17800 / 50 = 356.
+          # Each WS message sent by k6 contains 4 measurement lines
+          EXPECTED_TOTAL_LOGS=$((WS_SENT_COUNT * 4))
+          
+          # Calculate expected logs per device
           if [ "$TOTAL_DEVICES" -gt 0 ]; then
-             EXPECTED_COUNT=$((TOTAL_DB_LOGS / TOTAL_DEVICES))
+             EXPECTED_PER_DEVICE=$((EXPECTED_TOTAL_LOGS / TOTAL_DEVICES))
           else
-             EXPECTED_COUNT=0
+             EXPECTED_PER_DEVICE=0
           fi
 
           echo "### Final Test Validation Report" >> $GITHUB_STEP_SUMMARY
           echo "### Overall Statistics" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total WS Messages Sent (Counter) | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Devices in DB | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Logs in DB | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Calculated Per-Device Average | $EXPECTED_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total WS Batches Sent (k6) | $WS_SENT_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Total Logs ($WS_SENT_COUNT * 4) | $EXPECTED_TOTAL_LOGS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Actual Logs in Database | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Devices Tested | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Logs Per Device | $EXPECTED_PER_DEVICE |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
+          # 2. Consistency Check
           MATCH_COUNT=0
           MISMATCH_COUNT=0
           touch mismatches.txt
 
-          # Fetch IMEI list from DB instead of JSON if JSON is unreliable
           IMEI_LIST=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT imei FROM ${{env.DB_NAME}}.devices;")
           
           for id in $IMEI_LIST; do
-            # Get DB count for this specific IMEI
             DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
             
-            # Since K6 summary is showing 0, we use the average/expected count to check for consistency
-            if [ "$DB_COUNT" -eq "$EXPECTED_COUNT" ] && [ "$EXPECTED_COUNT" -ne 0 ]; then
+            if [ "$DB_COUNT" -eq "$EXPECTED_PER_DEVICE" ] && [ "$EXPECTED_PER_DEVICE" -ne 0 ]; then
               MATCH_COUNT=$((MATCH_COUNT+1))
             else
               MISMATCH_COUNT=$((MISMATCH_COUNT+1))
-              # Log the actual count for the mismatch table
-              echo "0 $DB_COUNT" >> mismatches.txt
+              echo "Expected:$EXPECTED_PER_DEVICE DB:$DB_COUNT" >> mismatches.txt
             fi
           done
 
           echo "#### **Consistency Report**" >> $GITHUB_STEP_SUMMARY
-          echo "* **Matched Devices (at $EXPECTED_COUNT logs):** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
-          echo "* **Mismatched Devices:** $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "$MISMATCH_COUNT" -gt 0 ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "| k6 Count | DB Count | No. of Devices |" >> $GITHUB_STEP_SUMMARY
-            echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-            sort mismatches.txt | uniq -c | awk '{print "| " $2 " | " $3 " | " $1 " |"}' >> $GITHUB_STEP_SUMMARY
+          if [ "$MISMATCH_COUNT" -eq 0 ] && [ "$TOTAL_DB_LOGS" -eq "$EXPECTED_TOTAL_LOGS" ]; then
+            echo " **SUCCESS:** All data streams are consistent. Every device has exactly $EXPECTED_PER_DEVICE logs." >> $GITHUB_STEP_SUMMARY
+          else
+            echo " **WARNING:** Data inconsistency detected!" >> $GITHUB_STEP_SUMMARY
+            echo "* **Matched Devices:** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "* **Mismatched Devices:** $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
           fi
