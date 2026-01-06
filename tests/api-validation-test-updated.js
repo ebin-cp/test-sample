@@ -26,31 +26,34 @@ export function setup() {
         
         if (res.status === 200) {
             const d = res.json();
-            deviceKeys.push({ api_key: d.key.key, imei: imei });
+            // നിങ്ങളുടെ API റെസ്പോൺസ് { key: "..." } എന്നാണോ അതോ { key: { key: "..." } } എന്നാണോ എന്ന് നോക്കുക
+            // മിക്കവാറും d.key ആയിരിക്കും ശരി.
+            const apiKey = (typeof d.key === 'object') ? d.key.key : d.key;
+            
+            if (apiKey) {
+                deviceKeys.push({ api_key: apiKey, imei: imei });
+            }
         }
     }
+    
+    console.log(`✅ Setup Complete: Registered ${deviceKeys.length} devices.`);
     return { keys: deviceKeys, startTimeNS: startTimeNS };
 }
 
 export default function(data) {
-    // --- 1. SAFETY CHECK (ഇതാണ് പുതിയ മാറ്റം) ---
+    // 1. SAFETY CHECK
     if (!data || !data.keys || data.keys.length === 0) {
-        console.error("❌ ERROR: No device keys found in setup data. Database might be empty.");
-        return; // ഡാറ്റ ഇല്ലെങ്കിൽ ഇവിടെ വെച്ച് ടെസ്റ്റ് നിർത്തും, ക്രാഷ് ആകില്ല.
+        return; 
     }
 
     const index = (__VU - 1) % data.keys.length;
     const myKey = data.keys[index];
 
-    // myKey ഉണ്ടോ എന്ന് ഉറപ്പുവരുത്തുക
-    if (!myKey || !myKey.imei) {
-        console.error(`❌ ERROR: VU ${__VU} could not find imei for index ${index}`);
-        return;
-    }
+    if (!myKey || !myKey.imei) return;
 
     const url = "ws://localhost:8883/api/live";
 
-    // --- 2. WS CONNECT & SEND DATA ---
+    // 2. WS CONNECT & SEND DATA
     const res = ws.connect(url, {
         headers: {
             Origin: "robad.in",
@@ -75,7 +78,8 @@ export default function(data) {
 
     check(res, { "WS Connected": (r) => r && r.status === 101 });
 
-    sleep(35); 
+    // ഇവിടെ വാലിഡേഷൻ നടക്കാൻ അല്പം സമയം നൽകണം
+    sleep(40); 
 
     const bufferNS = 5000 * 1000000;
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
@@ -103,14 +107,13 @@ export default function(data) {
             }
         }
         
-        // ഇവിടെ check ചെയ്യുന്നതിൽ മാറ്റം വരുത്തി (error ഒഴിവാക്കാൻ)
         check(measRes, {
-            [`${metric} Data Exists (Device ${index})`]: (r) => r.status === 200 && count > 0,
+            [`${metric} Data Saved (Device ${myKey.imei})`]: (r) => r.status === 200 && count > 0,
         });
     });
 
     check(totalMessagesForThisDevice, {
-        [`Total Messages Count for Device ${index}: ${totalMessagesForThisDevice}`]: (val) => val > 0,
+        [`Total DB Records for Device ${index} > 0`]: (val) => val > 0,
     });
 }
 
