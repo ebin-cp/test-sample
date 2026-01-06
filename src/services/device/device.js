@@ -50,6 +50,18 @@ export class DeviceService {
             created_at: Date.now(),
             modified_at: Date.now(),
         };
+
+        const deviceExistenceValidate = await this.dbConnection.query(
+            deviceExistence,
+            [imei],
+        );
+
+        if (Number(deviceExistenceValidate[0].count)) {
+            return {
+                code: 400,
+                reason: "Device already exists",
+            };
+        }
         const res = await this.dbConnection
             .execute(deviceInsertion, [
                 device.deviceId,
