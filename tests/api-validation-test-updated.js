@@ -1,5 +1,4 @@
 import http from "k6/http";
-import * as ulid from "https://esm.run/ulid";
 import ws from "k6/ws";
 import { check, sleep } from "k6";
 import { Counter } from "k6/metrics";
@@ -49,11 +48,10 @@ export function setup() {
                 deviceKeys.push({ api_key: apiKey, imei: imei });
             }
         } else {
-            console.error(`❌ Setup Failed for device ${i}: Status ${res.status}. Body: ${res.body}`);
+            console.error(`Setup Failed for device ${i}: Status ${res.status}. Body: ${res.body}`);
         }
     }
     
-    console.log(`✅ Setup Complete: Registered ${deviceKeys.length} devices.`);
     return { keys: deviceKeys, startTimeNS: startTimeNS };
 }
 
@@ -89,7 +87,7 @@ export default function(data) {
 
     check(res, { "WS Connected": (r) => r && r.status === 101 });
 
-    sleep(45); // ഡാറ്റ സേവ് ആകാൻ സമയം നൽകുന്നു
+    sleep(45); 
 
     const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
     const bufferNS = 5000 * 1000000;
