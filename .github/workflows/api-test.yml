@@ -1,0 +1,67 @@
+name: API & WS Test Framework
+
+on: 
+  push:
+    branches: [ feat/api-ws-tests ]
+  workflow_dispatch:
+
+jobs:
+  k6-validation:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        WS_MSG_INTERVAL: [100, 300, 500, 1000]
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start Services
+        run: |
+          cat <<EOF > .env
+          DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}
+          DATABASE_NAME=${{ secrets.DB_NAME }}
+          DATABASE_USER=${{ secrets.DB_USER }}
+          DATABASE_USER_PASSWORD=${{ secrets.DB_USER_PASSWD }}
+          DATABASE_HOST=mysql
+          DATABASE_PORT=3306
+          EOF
+          mkdir -p docker/v1
+          cp .env docker/v1/.env          
+          docker compose -f ./docker/v1/docker-compose.yml up -d
+      
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Execute Test
+        id: k6_run
+        continue-on-error: true 
+        run: k6 run tests/main-test.js --summary-export=summary.json
+        env:
+          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
+
+      - name: Final DB & API Validation
+        if: always()
+        env:
+          DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
+          DB_NAME: "${{secrets.DB_NAME}}"
+        run: |
+          if [ ! -f summary.json ]; then echo "Summary missing"; exit 1; fi
+          
+          WS_SENT_COUNT=$(jq -r '.metrics.ws_metrics_sent_msgs.count // 0' summary.json)
+          TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
+          EXPECTED_TOTAL_LOGS=$((WS_SENT_COUNT * 4))
+
+          echo "### Test Summary for ${{ matrix.WS_MSG_INTERVAL }}ms" >> $GITHUB_STEP_SUMMARY
+          echo "| Sent (WS) | Expected (DB) | Actual (DB) |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| $WS_SENT_COUNT | $EXPECTED_TOTAL_LOGS | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.WS_MSG_INTERVAL }}
+          path: summary.json
