@@ -38,7 +38,8 @@ jobs:
       - name: Execute Test
         id: k6_run
         continue-on-error: true 
-        run: k6 run tests/main-test.js --summary-export=summary.json
+        run: k6 run main-test.js --summary-export=../summary.json
+        working-directory: ./tests
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
