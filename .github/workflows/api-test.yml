@@ -63,7 +63,7 @@ jobs:
              EXPECTED_PER_DEVICE=0
           fi
 
-          echo "|Total Devices Retreived | ${{TOTAL_DEVICES}} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Devices Retrieved | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
           echo "### Test Summary for ${{ matrix.WS_MSG_INTERVAL }}ms" >> $GITHUB_STEP_SUMMARY
           echo "| Sent (WS) | Expected (DB) | Actual (DB) |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
