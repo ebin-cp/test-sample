@@ -69,7 +69,7 @@ jobs:
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| $WS_SENT_COUNT | $EXPECTED_TOTAL_LOGS | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
 
-          # Consistency Check
+          #  Consistency Check
           MATCH_COUNT=0
           MISMATCH_COUNT=0
           touch mismatches.txt
