@@ -52,13 +52,48 @@ jobs:
           if [ ! -f summary.json ]; then echo "Summary missing"; exit 1; fi
           
           WS_SENT_COUNT=$(jq -r '.metrics.ws_metrics_sent_msgs.count // 0' summary.json)
+          TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{env.DB_PASS}} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "0")
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
           EXPECTED_TOTAL_LOGS=$((WS_SENT_COUNT * 4))
+
+          # Calculate expected logs per device
+          if [ "$TOTAL_DEVICES" -gt 0 ]; then
+             EXPECTED_PER_DEVICE=$((EXPECTED_TOTAL_LOGS / TOTAL_DEVICES))
+          else
+             EXPECTED_PER_DEVICE=0
+          fi
 
           echo "### Test Summary for ${{ matrix.WS_MSG_INTERVAL }}ms" >> $GITHUB_STEP_SUMMARY
           echo "| Sent (WS) | Expected (DB) | Actual (DB) |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| $WS_SENT_COUNT | $EXPECTED_TOTAL_LOGS | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
+
+          # Consistency Check
+          MATCH_COUNT=0
+          MISMATCH_COUNT=0
+          touch mismatches.txt
+
+          IMEI_LIST=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT imei FROM ${{env.DB_NAME}}.devices;")
+          
+          for id in $IMEI_LIST; do
+            DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
+            
+            if [ "$DB_COUNT" -eq "$EXPECTED_PER_DEVICE" ] && [ "$EXPECTED_PER_DEVICE" -ne 0 ]; then
+              MATCH_COUNT=$((MATCH_COUNT+1))
+            else
+              MISMATCH_COUNT=$((MISMATCH_COUNT+1))
+              echo "Expected:$EXPECTED_PER_DEVICE DB:$DB_COUNT" >> mismatches.txt
+            fi
+          done
+
+          echo "#### **Consistency Report**" >> $GITHUB_STEP_SUMMARY
+          if [ "$MISMATCH_COUNT" -eq 0 ] && [ "$TOTAL_DB_LOGS" -eq "$EXPECTED_TOTAL_LOGS" ]; then
+            echo " **SUCCESS:** All data streams are consistent. Every device has exactly $EXPECTED_PER_DEVICE logs." >> $GITHUB_STEP_SUMMARY
+          else
+            echo " **FAILED:** Data inconsistency detected!" >> $GITHUB_STEP_SUMMARY
+            echo "* **Matched Devices:** $MATCH_COUNT" >> $GITHUB_STEP_SUMMARY
+            echo "* **Mismatched Devices:** $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload Artifacts
         if: always()
