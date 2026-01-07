@@ -63,6 +63,7 @@ jobs:
              EXPECTED_PER_DEVICE=0
           fi
 
+          echo "|Total Devices Retreived | ${{TOTAL_DEVICES}}"
           echo "### Test Summary for ${{ matrix.WS_MSG_INTERVAL }}ms" >> $GITHUB_STEP_SUMMARY
           echo "| Sent (WS) | Expected (DB) | Actual (DB) |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
@@ -100,4 +101,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: logs-${{ matrix.WS_MSG_INTERVAL }}
-          path: summary.json
+          path: |
+            summary.json
+            mismatches.txt         
