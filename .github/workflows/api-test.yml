@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [1000]
+        WS_MSG_INTERVAL: [100, 1000]
     timeout-minutes: 8
 
     steps:
@@ -65,10 +65,7 @@ jobs:
 
           echo "### Test Summary for ${{ matrix.WS_MSG_INTERVAL }}ms" >> $GITHUB_STEP_SUMMARY
           echo "| Sent (WS) | Expected (DB) | Actual (DB) |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| $WS_SENT_COUNT | $EXPECTED_TOTAL_LOGS | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
-
-          echo "|:---------- |:------------">> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | " >> $GITHUB_STEP_SUMMARY
           echo "| Total WS Messages Sent(Expected) ($WS_SENT_COUNT * 4) | $EXPECTED_TOTAL_LOGS |" >>$GITHUB_STEP_SUMMARY
           echo "| Total Devices Retrieved | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
           echo "| Total Logs in Database (Received) | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
@@ -95,10 +92,12 @@ jobs:
 
           echo "#### **Consistency Report**" >> $GITHUB_STEP_SUMMARY
           if [ "$MISMATCH_COUNT" -eq 0 ] && [ "$TOTAL_DB_LOGS" -eq "$EXPECTED_TOTAL_LOGS" ]; then
-            echo " **SUCCESS:** All data streams are consistent. Every device has exactly $EXPECTED_PER_DEVICE logs." >> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- | " >> $GITHUB_STEP_SUMMARY
+            echo "| **SUCCESS:** All data streams are consistent| Every device has exactly $EXPECTED_PER_DEVICE logs|" >> $GITHUB_STEP_SUMMARY
+            echo "" $GITHUB_STEP_SUMMARY
           else
             echo " ### **FAILED:** Data inconsistency detected!" >> $GITHUB_STEP_SUMMARY
-            echo "|:---------- |:------------">> $GITHUB_STEP_SUMMARY
+            echo "| :--- | :--- | " >> $GITHUB_STEP_SUMMARY
             echo "| **Matched Devices:** $MATCH_COUNT |" >> $GITHUB_STEP_SUMMARY
             echo "| **Mismatched Devices:** $MISMATCH_COUNT |" >> $GITHUB_STEP_SUMMARY
             echo "" >>$GITHUB_STEP_SUMMARY
