@@ -1,5 +1,5 @@
 import { createDevices } from "../api/device-create.js"; 
-import { sendWsMetrics } from "../websocket/ws-tests.js";
+import { sendWsMetrics } from "../websocket/ws-measurement.js";
 import { validateApiMeasurements } from "../api/measurement-check.js";
 import { generateRandomTruckData, assignTruck, deassignTruck, getDeviceDetails } from "../api/device-actions.js";
 import { check, sleep } from 'k6';
@@ -34,7 +34,7 @@ export default function(data) {
     sendWsMetrics(myKey.imei, myKey.api_key);
 
     // 3. Short Sleep
-    console.log(`[VU ${__VU}] - Short sleep for 10s...`);
+    console.log(`[VU ${__VU}] -`);
     sleep(10); 
 
     // 4. De-assign (Ithu ippo ivide idunnu so summary-il result kittum)
