@@ -48,8 +48,7 @@ jobs:
           DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
           DB_NAME: "${{secrets.DB_NAME}}"
         run: |
-          sleep 5
-          CALIB_OK=$(grep "Calibration Verified" k6_output.log | wc -l || echo "0")
+          
           if [ ! -f summary.json ]; then echo "Summary missing"; exit 1; fi
           
           # --- 1. Extract API Metrics from summary.json ---
@@ -80,10 +79,18 @@ jobs:
           echo "| Truck Assignment | $ASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
           echo "| Truck De-assignment | $DEASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
           
-          echo "#### **Volume Mapping Report**" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Result | Target |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
-          echo "| Calibration Sync | $CALIB_OK | 50 |" >> $GITHUB_STEP_SUMMARY
+          CALIB_OK=$(jq '.metrics.calibration_sync_total.values.count // 0' summary.json)
+          TARGET_VUS=50
+
+          echo "### Calibration Verification Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Result | Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$CALIB_OK" -ge "$TARGET_VUS" ]; then
+            echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | FAIL |" >> $GITHUB_STEP_SUMMARY
+          fi
 
           echo "#### **Measurement & DB Consistency**" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY

@@ -2,19 +2,20 @@ import ws from "k6/ws";
 import { Counter } from "k6/metrics";
 
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
-const calibration_success = new Counter("calibration_success");
+const calibration_sync_total = new Counter("calibration_sync_total");
 
 export function sendWsMetrics(imei, apiKey) {
     const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
     const ws_duration = Number(__ENV.WS_DURATION) || 60000; 
 
-    ws.connect("ws://localhost:8883/api/live", {
+    ws.connect(__ENV.WS_URL || "ws://localhost:8883/api/live", {
         headers: { Origin: "robad.in", Authorization: `${imei} ${apiKey}` },
     }, (socket) => {
         
         socket.on("open", () => {
             socket.send("SYNC:CALIBRATION:volume");
             console.log(`[VU ${__VU}] - Sent: SYNC:CALIBRATION:volume`);
+
             socket.setTimeout(() => {
                 const startTime = Date.now();
 
@@ -31,13 +32,14 @@ export function sendWsMetrics(imei, apiKey) {
                     
                     if (Date.now() - startTime >= ws_duration) {
                         clearInterval(timer);
+                        
                         socket.setTimeout(() => {
                             socket.close();
                             console.log(`[VU ${__VU}] - WS Period finished.`);
                         }, 2000);
                     }
                 }, ws_msg_interval);
-            }, 3000);
+            }, 3000); 
         });
 
         socket.on("message", (msg) => {
@@ -45,8 +47,7 @@ export function sendWsMetrics(imei, apiKey) {
             console.log(`[VU ${__VU}] Received from Server: ${data}`);
             
             if (data.trim().length > 0) {
-                console.log(`[VU ${__VU}] Calibration Verified`);
-                calibration_success.add(1);
+                calibration_sync_total.add(1);
             }
         });
 
