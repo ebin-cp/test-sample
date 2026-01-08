@@ -47,6 +47,7 @@ export default function(data) {
     const myKey = data.keys[(__VU - 1) % data.keys.length];
     const interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
     sendLoadMetrics(myKey, interval);
+    sleep(130);
 }
 
 export function handleSummary(data) {
