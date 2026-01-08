@@ -6,7 +6,7 @@ import { check, sleep } from 'k6';
 
 export const options = {
     vus: 50,
-    duration: '1m',
+    duration: '2m',
     gracefulStop: '30s',
 };
 

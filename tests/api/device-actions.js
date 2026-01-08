@@ -5,11 +5,11 @@ const randomInt = (min, max) => Math.floor(Math.random() * (max - min + 1) + min
 
 export function generateRandomTruckData(imei) {
     const truckID = imei.slice(-4);
-    const vol = randomInt(100, 500);
+    const vol = randomInt(500, 1000);
     const mapping = `1,${vol * 0.1}\n2,${vol * 0.5}\n3,${vol}`;
     
     return {
-        "truck_reg_no": `TRUCK-KL-${truckID}-${randomInt(10, 99)}`,
+        "truck_reg_no": `KLTR${truckID}${randomInt(10, 99)}`,
         "truck_tank_volume": vol,
         "truck_tank_volume_mapping": mapping
     };
