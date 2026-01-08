@@ -6,8 +6,8 @@ import { check, sleep } from 'k6';
 
 export const options = {
     vus: 50,
-    duration: '2m',
-    gracefulStop: '30s',
+    iterations: 50,
+    maxDuration: '3m',
 };
 
 export function setup() {
