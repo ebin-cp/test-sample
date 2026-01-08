@@ -53,24 +53,30 @@ jobs:
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
-          # 1. Extract Metrics from k6 Summary
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          # 1. Extract Metrics from k6 Summary (Corrected JQ Path)
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.count // 0' summary.json)
           EXPECTED_ROWS=$(( WS_SENT * 4 ))
 
           # 2. Extract Data from MySQL
           ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
+          
           DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
                          docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
 
-          # Generate GitHub Job Summary (UI Table)
-          echo "### Load Test Summary" >> $GITHUB_STEP_SUMMARY
+          # 3. Generate GitHub Job Summary (UI Table)
+          echo "###  Load Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| Devices Created | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
           echo "| WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
           echo "| Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Rows Actual in DB | $ROW_COUNT |" >> $GITHUB_STEP_SUMMARY
-          
+          echo "| Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
+
+          # 4. Final Integrity Check
+          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ] || [ "$WS_SENT" -eq 0 ]; then
+            echo "::error::Validation Failed! Sent: $WS_SENT, Expected: $EXPECTED_ROWS, DB: $ACTUAL_ROWS"
+            exit 1
+          fi
 
       - name: Upload Artifacts
         if: always()
