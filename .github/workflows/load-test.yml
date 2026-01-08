@@ -49,7 +49,7 @@ jobs:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
       - name: Final Validation
-           if: always()
+        if: always()
         env:
           MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
         run: |
@@ -61,7 +61,7 @@ jobs:
           ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
           DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
                          docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
-                         
+
           # Generate GitHub Job Summary (UI Table)
           echo "### Load Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
@@ -70,6 +70,7 @@ jobs:
           echo "| WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
           echo "| Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
           echo "| Rows Actual in DB | $ROW_COUNT |" >> $GITHUB_STEP_SUMMARY
+          fi
 
       - name: Upload Artifacts
         if: always()
