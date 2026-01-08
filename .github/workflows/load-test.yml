@@ -41,7 +41,10 @@ jobs:
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
-        run: k6 run tests/load-main-test.js --summary-export=summary.json
+        id: k6_run
+        run: |
+          k6 run load-main-test.js --summary-export=../../summary.json
+        working-directory: ./tests/src 
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 
