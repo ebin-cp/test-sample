@@ -1,7 +1,7 @@
 import http from "k6/http";
 import { sleep } from "k6";
 import { sendWsMetrics } from "./websocket/ws-tests.js"; 
-import { validateApiMeasurements } from "./api/api-tests.js";
+import { validateApiMeasurements } from "./api/measurement-check.js";
 
 export const options = {
     vus: 50,
