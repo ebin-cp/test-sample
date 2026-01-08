@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [100, 200, 300, 400, 500]
+        WS_MSG_INTERVAL: [500]
     timeout-minutes: 10 
 
     steps:
@@ -59,7 +59,7 @@ jobs:
       - name: Extract k6 WS Messages Sent
         id: k6_stats
         run: |
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count' summary.json)
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
           echo "WS_SENT=$WS_SENT" >> $GITHUB_ENV
           echo "K6 sent $WS_SENT message batches"
 

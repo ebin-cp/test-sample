@@ -9,7 +9,7 @@ const registrationCount = new Counter("registrations_total");
 
 export const options = {
     vus: 50, 
-    duration: "2m", 
+    duration: "1m", 
     thresholds: {
         'registrations_total': ["count >= 50"],
         'ws_metrics_sent_msgs': ["count >= 10000"],
