@@ -59,9 +59,8 @@ jobs:
       - name: Extract k6 WS Messages Sent
         id: k6_stats
         run: |
-          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.count' summary.json)
           echo "WS_SENT=$WS_SENT" >> $GITHUB_ENV
-          echo "K6 sent $WS_SENT message batches"
 
       - name: Get Log Messages Count
         env:
@@ -90,6 +89,35 @@ jobs:
           else
             echo "Success: Data counts match or exceeded minimum requirement."
           fi
+
+      - name: Final Validation
+        if: always()
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+        run: |
+          # 1. Extract Metrics from k6 Summary
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.values.count // 0' summary.json)
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+          # 2. Extract Data from MySQL
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
+          # Helper function to print status
+          status() {
+            if [[ "$1" -gt 0 ]]; then
+              echo " Failed"
+            else
+              echo " Passed"
+            fi
+          }
+          
+          # Generate GitHub Job Summary (UI Table)
+          echo "### Load Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Devices Registered | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
 
       - name: Upload Artifacts
         if: always()
