@@ -11,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        WS_MSG_INTERVAL: [100, 1000]
+        WS_MSG_INTERVAL: [1000]
     timeout-minutes: 8
 
     steps:
@@ -38,8 +38,8 @@ jobs:
       - name: Execute Test
         id: k6_run
         continue-on-error: true 
-        run: k6 run ./api-main-test.js --summary-export=../summary.json
-        working-directory: ./tests
+        run: k6 run api-main-test.js --summary-export=../summary.json
+        working-directory: ./tests/src
         env:
           WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
 

@@ -5,7 +5,7 @@ export function validateApiMeasurements(myKey, startTimeNS) {
     const metricsToCheck = ["volume", "cellular", "firmware", "battery"];
     const bufferNS = 5000 * 1000000;
     const testEndTimeNS = (Date.now() * 1000000) + bufferNS;
-    const adjustedStartNS = startTimeNs - bufferNS;
+    const adjustedStartNS = startTimeNS - bufferNS;
 
     metricsToCheck.forEach((metric) => {
         const measUrl = `http://localhost:8883/api/v1/device/measurements?imei=${myKey.imei}&measurement=${metric}&start_ns=${adjustedStartNS}&end_ns=${testEndTimeNS}`;
