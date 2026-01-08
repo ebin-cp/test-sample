@@ -51,52 +51,65 @@ jobs:
         run: |
           if [ ! -f summary.json ]; then echo "Summary missing"; exit 1; fi
           
+          # --- 1. Extract API Metrics from summary.json ---
+          # k6 checks-il ninnu success counts edukunnu
+          ASSIGN_OK=$(jq -r '.root_group.checks[] | select(.name=="Assign Status 200") | .passes' summary.json || echo "0")
+          MAPPING_OK=$(jq -r '.root_group.checks[] | select(.name=="Truck Mapped") | .passes' summary.json || echo "0")
+          DEASSIGN_OK=$(jq -r '.root_group.checks[] | select(.name=="Deassign Status 200") | .passes' summary.json || echo "0")
+          MEASUREMENT_API_OK=$(jq -r '.root_group.checks[] | select(.name | contains("Data Saved")) | .passes' summary.json | awk '{s+=$1} END {print s}' || echo "0")
+          
+          # --- 2. Extract Measurement & DB Metrics ---
           WS_SENT_COUNT=$(jq -r '.metrics.ws_metrics_sent_msgs.count // 0' summary.json)
           TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{env.DB_PASS}} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "0")
           TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
+          
+          # Same measurement logic as before
           EXPECTED_TOTAL_LOGS=$((WS_SENT_COUNT * 4))
-
-          # Calculate expected logs per device
           if [ "$TOTAL_DEVICES" -gt 0 ]; then
              EXPECTED_PER_DEVICE=$((EXPECTED_TOTAL_LOGS / TOTAL_DEVICES))
           else
              EXPECTED_PER_DEVICE=0
           fi
 
-          echo "### Test Summary for ${{ matrix.WS_MSG_INTERVAL }}ms" >> $GITHUB_STEP_SUMMARY
-           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total WS Messages Sent(Expected) ($WS_SENT_COUNT * 4) | $EXPECTED_TOTAL_LOGS |" >>$GITHUB_STEP_SUMMARY
-          echo "| Total Devices Retrieved | $TOTAL_DEVICES |" >> $GITHUB_STEP_SUMMARY
-          echo "| Total Logs in Database (Received) | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
-          echo "| Expected Logs Per Device | $EXPECTED_PER_DEVICE |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> GITHUB_STEP_SUMMARY
+          # --- 3. Generate GitHub Step Summary Report ---
+          echo "### 🚀 API & Framework Validation Summary" >> $GITHUB_STEP_SUMMARY
+          
+          echo "#### **API Actions Report**" >> $GITHUB_STEP_SUMMARY
+          echo "| Action Type | Success Count | Expected | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Device Creation | $TOTAL_DEVICES | 50 | $([ "$TOTAL_DEVICES" -eq 50 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Truck Assignment | $ASSIGN_OK | 50 | $([ "$ASSIGN_OK" -eq 50 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Data Mapping | $MAPPING_OK | 50 | $([ "$MAPPING_OK" -eq 50 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| API Measurement Check | $MEASUREMENT_API_OK | 200 | $([ "$MEASUREMENT_API_OK" -ge 200 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Truck De-assignment | $DEASSIGN_OK | 50 | $([ "$DEASSIGN_OK" -eq 50 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
 
-          #  Consistency Check
+          echo "#### **Measurement & DB Consistency**" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total WS Messages Sent | $WS_SENT_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total DB Logs (Received) | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Expected Logs Per Device | $EXPECTED_PER_DEVICE |" >> $GITHUB_STEP_SUMMARY
+          
+          # --- 4. Consistency Per-Device Logic (Your existing loop) ---
           MATCH_COUNT=0
           MISMATCH_COUNT=0
           touch mismatches.txt
-
           IMEI_LIST=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT imei FROM ${{env.DB_NAME}}.devices;")
           
           for id in $IMEI_LIST; do
             DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
-            
             if [ "$DB_COUNT" -eq "$EXPECTED_PER_DEVICE" ] && [ "$EXPECTED_PER_DEVICE" -ne 0 ]; then
               MATCH_COUNT=$((MATCH_COUNT+1))
             else
               MISMATCH_COUNT=$((MISMATCH_COUNT+1))
-              echo "Expected:$EXPECTED_PER_DEVICE DB:$DB_COUNT" >> mismatches.txt
+              echo "IMEI:$id Expected:$EXPECTED_PER_DEVICE DB:$DB_COUNT" >> mismatches.txt
             fi
           done
 
-          echo "#### **Consistency Report**" >> $GITHUB_STEP_SUMMARY
-          if [ "$MISMATCH_COUNT" -eq 0 ] && [ "$TOTAL_DB_LOGS" -eq "$EXPECTED_TOTAL_LOGS" ]; then
-            echo " **SUCCESS:** All data streams are consistent. Every device has exactly $EXPECTED_PER_DEVICE logs" >> $GITHUB_STEP_SUMMARY
+          if [ "$MISMATCH_COUNT" -eq 0 ] && [ "$TOTAL_DB_LOGS" -eq "$EXPECTED_TOTAL_LOGS" ] && [ "$TOTAL_DB_LOGS" -gt 0 ]; then
+            echo "> **SUCCESS:** All data streams are consistent. Every device has exactly $EXPECTED_PER_DEVICE logs." >> $GITHUB_STEP_SUMMARY
           else
-            echo " ### **FAILED:** Data inconsistency detected!" >> $GITHUB_STEP_SUMMARY
-            echo " **Matched Devices:** $MATCH_COUNT " >> $GITHUB_STEP_SUMMARY
-            echo " **Mismatched Devices:** $MISMATCH_COUNT " >> $GITHUB_STEP_SUMMARY
+            echo "> **FAILED:** Data inconsistency detected! Matched: $MATCH_COUNT, Mismatched: $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload Artifacts
