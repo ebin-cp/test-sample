@@ -50,10 +50,10 @@ jobs:
           DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
           DB_NAME: "${{secrets.DB_NAME}}"
         run: |
+          CALIB_OK=$(grep "Calibration Verified" ./tests/src/k6_output.log | wc -l || echo "0")
           if [ ! -f summary.json ]; then echo "Summary missing"; exit 1; fi
           
           # --- 1. Extract API Metrics from summary.json ---
-          # k6 checks-il ninnu success counts edukunnu
           ASSIGN_OK=$(jq -r '.root_group.checks["Assign Status 200"].passes // 0' summary.json)
           DEASSIGN_OK=$(jq -r '.root_group.checks["Deassign Status 200"].passes // 0' summary.json)
           
@@ -81,7 +81,9 @@ jobs:
           echo "| Truck Assignment | $ASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
           echo "| Truck De-assignment | $DEASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
           
-          echo "#### **Volume Mapping Report**">> $GITHUB_STEP_SUMMARY
+          echo "#### **Volume Mapping Report**" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Result | Target |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
           echo "| Calibration Sync | $CALIB_OK | 50 |" >> $GITHUB_STEP_SUMMARY
 
           echo "#### **Measurement & DB Consistency**" >> $GITHUB_STEP_SUMMARY
