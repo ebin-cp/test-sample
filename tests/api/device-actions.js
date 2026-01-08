@@ -19,7 +19,11 @@ export function generateRandomTruckData(imei) {
 export function assignTruck(imei, apiKey, truckData) {
     const url = `http://localhost:8883/api/v1/device/assign-truck?imei=${imei}`;
     const params = { headers: { "Authorization": apiKey, "Content-Type": "application/json" } };
-    return http.put(url, JSON.stringify(truckData), params);
+    const res = http.put(url, JSON.stringify(truckData), params);
+    if (res.status !== 200){
+        console.log(`Assign Fail for ${imei}:Status ${res.status} Body:${res.body}`);
+    }
+    return res;
 }
 
 // Action: De-assign Truck
