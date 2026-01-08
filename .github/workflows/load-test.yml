@@ -91,6 +91,14 @@ jobs:
             echo "Success: Data counts match or exceeded minimum requirement."
           fi
 
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-logs-${{ matrix.WS_MSG_INTERVAL }}
+          path: |
+            summary.json
+
       - name: Stop Services
         if: always()
         run: docker compose -f ./docker/v1/docker-compose.yml down -v
