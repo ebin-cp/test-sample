@@ -15,7 +15,6 @@ export function generateRandomTruckData(imei) {
     };
 }
 
-// Action: Assign Truck
 export function assignTruck(imei, apiKey, truckData) {
     const url = `http://localhost:8883/api/v1/device/assign-truck?imei=${imei}`;
     const params = { headers: { "Authorization": apiKey, "Content-Type": "application/json" } };
@@ -26,13 +25,11 @@ export function assignTruck(imei, apiKey, truckData) {
     return res;
 }
 
-// Action: De-assign Truck
 export function deassignTruck(imei, apiKey) {
     const url = `http://localhost:8883/api/v1/device/deassign-truck?imei=${imei}`;
     return http.put(url, null, { headers: { "Authorization": apiKey } });
 }
 
-// Action: Verify Status
 export function getDeviceDetails(imei, apiKey) {
     const url = `http://localhost:8883/api/v1/device?imei=${imei}`;
     const res = http.get(url, { headers: { "Authorization": apiKey } });

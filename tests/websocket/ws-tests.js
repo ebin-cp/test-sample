@@ -5,12 +5,14 @@ const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
 
 export function sendWsMetrics(imei, apiKey) {
     const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
-    
+    const ws_duration = Number(__ENV.WS_DURATION) || 60000; // Default 1 minute (60000ms)
+
     ws.connect("ws://localhost:8883/api/live", {
         headers: { Origin: "robad.in", Authorization: `${imei} ${apiKey}` },
     }, (socket) => {
         socket.on("open", () => {
-            let count = 0;
+            const startTime = Date.now();
+
             const timer = socket.setInterval(() => {
                 const time_str = (Date.now() * 1000000).toString();
                 
@@ -22,17 +24,12 @@ export function sendWsMetrics(imei, apiKey) {
                 socket.send([cellular_log, volume_log, fw_log, bat_log].join("\n"));
                 ws_metrics_sent_msgs.add(1);
                 
-                count++;
-                if (count >= 10) { 
-                    // CHANGE: Use global clearInterval instead of socket.clearInterval
-                    clearInterval(timer); 
-                    socket.close(); 
-                    console.log(`[VU ${__VU}] - WS streaming finished and socket closed.`);
+                if (Date.now() - startTime >= ws_duration) {
+                    clearInterval(timer);
+                    socket.close();
+                    console.log(`[VU ${__VU}] - WS Period (${ws_duration/1000}s) finished. Closing.`);
                 }
             }, ws_msg_interval);
         });
-        
-        socket.on("message", (e) => console.log(e.toString()));
-        socket.on("error", (e) => console.error("WS Error:", e.error()));
     });
 }
