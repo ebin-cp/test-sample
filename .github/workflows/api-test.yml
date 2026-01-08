@@ -8,9 +8,6 @@ on:
 jobs:
   k6-validation:
     runs-on: ubuntu-latest
-    env:
-        WS_MSG_INTERVAL: 1000
-        WS_MSG_DURATION: 60000
     timeout-minutes: 8
 
     steps:
@@ -39,8 +36,6 @@ jobs:
         continue-on-error: true 
         run: k6 run api-main-test.js --summary-export=../../summary.json --console-output=../../k6_output.log
         working-directory: ./tests/src
-        env:
-          WS_MSG_INTERVAL: ${{ env.WS_MSG_INTERVAL }}
 
       - name: Final DB & API Validation
         if: always()
