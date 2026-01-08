@@ -1,5 +1,5 @@
 import { createDevices } from "./api/device-create.js"; 
-import { sendLoadMetrics } from "./websocket/ws-load.js"; // ഇമ്പോർട്ട് ചെയ്യുന്നു
+import { sendLoadMetrics } from "../websocket/ws-load.js"; 
 import { sleep } from 'k6';
 
 export const options = {
@@ -11,7 +11,6 @@ export const options = {
             maxDuration: '4m',
         },
     },
-    summaryExport: 'summary.json',
 };
 
 export function setup() {
@@ -19,8 +18,11 @@ export function setup() {
 }
 
 export default function(data) {
+    if (!data || !data.keys.length) return;
+
     const myKey = data.keys[(__VU - 1) % data.keys.length];
     const interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
-    
-    sendLoadMetrics(myKey.imei, myKey.api_key, interval, 120000);
+    const duration = 120000; // 2 minutes
+
+    sendLoadMetrics(myKey.imei, myKey.api_key, interval, duration);
 }
