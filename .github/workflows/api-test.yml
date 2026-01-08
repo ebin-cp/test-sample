@@ -92,11 +92,11 @@ jobs:
 
           echo "#### **Consistency Report**" >> $GITHUB_STEP_SUMMARY
           if [ "$MISMATCH_COUNT" -eq 0 ] && [ "$TOTAL_DB_LOGS" -eq "$EXPECTED_TOTAL_LOGS" ]; then
-            echo "| **SUCCESS:** All data streams are consistent| Every device has exactly $EXPECTED_PER_DEVICE logs|" >> $GITHUB_STEP_SUMMARY
+            echo " **SUCCESS:** All data streams are consistent. Every device has exactly $EXPECTED_PER_DEVICE logs" >> $GITHUB_STEP_SUMMARY
           else
             echo " ### **FAILED:** Data inconsistency detected!" >> $GITHUB_STEP_SUMMARY
-            echo "| **Matched Devices:** $MATCH_COUNT |" >> $GITHUB_STEP_SUMMARY
-            echo "| **Mismatched Devices:** $MISMATCH_COUNT |" >> $GITHUB_STEP_SUMMARY
+            echo " **Matched Devices:** $MATCH_COUNT " >> $GITHUB_STEP_SUMMARY
+            echo " **Mismatched Devices:** $MISMATCH_COUNT " >> $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload Artifacts
