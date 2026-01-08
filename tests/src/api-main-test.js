@@ -27,19 +27,32 @@ export default function(data) {
 
     const truckPayload = generateRandomTruckData(myKey.imei);
 
-    // assign and verify
+    // 1. Assign and verify
+    console.log(`[VU ${__VU}] - Assigning truck to imei: ${myKey.imei}`);
     const assignRes = assignTruck(myKey.imei, myKey.api_key, truckPayload);
     check(assignRes, {"Assign Status 200":(r) => r.status === 200});
 
-    // stream data and validate measurements
+    // 2. Stream data
+    console.log(`[VU ${__VU}] - Sending WebSocket metrics...`);
     sendWsMetrics(myKey.imei, myKey.api_key);
+
+    // 3. Wait for data to process
+    console.log(`[VU ${__VU}] - Sleeping for 45s...`);
     sleep(45); 
+
+    // 4. Validate measurements
+    console.log(`[VU ${__VU}] - Checking measurements via API...`);
     validateApiMeasurements(myKey, data.startTimeNS);
 
-    // de-assign and verify
+    // 5. De-assign and verify
+    console.log(`[VU ${__VU}] - De-assigning truck...`);
     const deRes = deassignTruck(myKey.imei, myKey.api_key);
     check(deRes, {"Deassign Status 200":(r) => r.status === 200});
     
+    // 6. Final verification
     const afterDe = getDeviceDetails(myKey.imei, myKey.api_key);
-    check(afterDe, {"Fields Empty": (v) => v.fields.length === 0});
+    // Safe check: Fields ഉണ്ടോ എന്ന് നോക്കുക
+    check(afterDe, {"Fields Empty": (v) => v && v.fields && v.fields.length === 0});
+    
+    console.log(`[VU ${__VU}] - Iteration completed successfully!`);
 }
