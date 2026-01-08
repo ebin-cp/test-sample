@@ -55,9 +55,7 @@ jobs:
           # --- 1. Extract API Metrics from summary.json ---
           # k6 checks-il ninnu success counts edukunnu
           ASSIGN_OK=$(jq -r '.root_group.checks["Assign Status 200"].passes // 0' summary.json)
-          MAPPING_OK=$(jq -r '.root_group.checks["Truck Mapped"].passes // 0' summary.json)
           DEASSIGN_OK=$(jq -r '.root_group.checks["Deassign Status 200"].passes // 0' summary.json)
-          MEASUREMENT_API_OK=$(jq -r '.root_group.checks[] | select(.name | contains("Data Saved")) | .passes' summary.json | awk '{s+=$1} END {print s}' || echo "0")
           
           # --- 2. Extract Measurement & DB Metrics ---
           WS_SENT_COUNT=$(jq -r '.metrics.ws_metrics_sent_msgs.count // 0' summary.json)

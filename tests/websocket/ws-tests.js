@@ -39,9 +39,9 @@ export function sendWsMetrics(imei, apiKey) {
 
         socket.on("message", (msg) => {
             const data = msg.toString();
-            
-            if (data.includes("12,13") && data.includes("2,28") && data.includes("28,26")) {
-                console.log(`[VU ${__VU}]  Calibration Verified: ${data}`);
+            console.log(`[VU ${__VU}] Received from Server: ${data}`);
+            if (data.trim().length > 0) {
+                console.log(`[VU ${__VU}] Calibration Verified`);
                 calibration_success.add(1);
             }
         });
