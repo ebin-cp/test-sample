@@ -12,6 +12,14 @@ export function sendWsMetrics(imei, apiKey) {
         headers: { Origin: "robad.in", Authorization: `${imei} ${apiKey}` },
     }, (socket) => {
         
+        socket.on("message", (msg) => {
+            const data = msg.toString();
+            console.log(`[VU ${__VU}] SERVER_RESPONSE_DATA: ${data}`);
+            if (data.trim().length > 0) {
+                calibration_sync_total.add(1);
+            }
+        });
+
         socket.on("open", () => {
             socket.send("SYNC:CALIBRATION:volume");
             console.log(`[VU ${__VU}] - Sent: SYNC:CALIBRATION:volume`);
@@ -35,15 +43,6 @@ export function sendWsMetrics(imei, apiKey) {
                     console.log(`[VU ${__VU}] - WS Period finished.`);
                 }
             }, ws_msg_interval);
-        });
-
-        socket.on("message", (msg) => {
-            const data = msg.toString();
-            console.log(`[VU ${__VU}] Received from Server: ${data}`);
-            if (data.trim().length > 0) {
-                console.log(`[VU ${__VU}] Calibration Verified`);
-                calibration_sync_total.add(1); 
-            }
         });
 
         socket.on("error", (e) => console.error(`[VU ${__VU}] WS Error:`, e.error()));
