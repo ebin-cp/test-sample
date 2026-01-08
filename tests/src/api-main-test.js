@@ -10,7 +10,7 @@ export const options = {
             executor: 'per-vu-iterations',
             vus: 50,
             iterations: 1,
-            maxDuration: '10m', // Corrected duration
+            maxDuration: '2m', // Corrected duration
         },
     },
 };
