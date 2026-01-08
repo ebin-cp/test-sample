@@ -1,4 +1,4 @@
-import { createDevices } from "./api/device-create.js"; 
+import { createDevices } from "../api/device-create.js"; 
 import { sendLoadMetrics } from "../websocket/ws-load.js"; 
 import { sleep } from 'k6';
 
