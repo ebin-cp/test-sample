@@ -72,16 +72,15 @@ jobs:
           fi
 
           # --- 3. Generate GitHub Step Summary Report ---
-          echo "### 🚀 API & Framework Validation Summary" >> $GITHUB_STEP_SUMMARY
           
+          echo "| Resource | Created | Expected |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Total Devices | $TOTAL_DEVICES | 50 |" >> $GITHUB_STEP_SUMMARY
           echo "#### **API Actions Report**" >> $GITHUB_STEP_SUMMARY
-          echo "| Action Type | Success Count | Expected | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          echo "| Device Creation | $TOTAL_DEVICES | 50 | $([ "$TOTAL_DEVICES" -eq 50 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| Truck Assignment | $ASSIGN_OK | 50 | $([ "$ASSIGN_OK" -eq 50 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| Data Mapping | $MAPPING_OK | 50 | $([ "$MAPPING_OK" -eq 50 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| API Measurement Check | $MEASUREMENT_API_OK | 200 | $([ "$MEASUREMENT_API_OK" -ge 200 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
-          echo "| Truck De-assignment | $DEASSIGN_OK | 50 | $([ "$DEASSIGN_OK" -eq 50 ] && echo "✅" || echo "❌") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Action Type | Success Count | Expected |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Truck Assignment | $ASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
+          echo "| Truck De-assignment | $DEASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
 
           echo "#### **Measurement & DB Consistency**" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
