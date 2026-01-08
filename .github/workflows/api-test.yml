@@ -8,11 +8,9 @@ on:
 jobs:
   k6-validation:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      env:
-        WS_MSG_INTERVAL: [1000]
-        WS_MSG_DURATION: [60000]
+    env:
+        WS_MSG_INTERVAL: 1000
+        WS_MSG_DURATION: 60000
     timeout-minutes: 8
 
     steps:
