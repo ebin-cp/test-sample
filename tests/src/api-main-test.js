@@ -5,9 +5,14 @@ import { generateRandomTruckData, assignTruck, deassignTruck, getDeviceDetails }
 import { check, sleep } from 'k6';
 
 export const options = {
-    vus: 50,
-    iterations: 50,
-    maxDuration: '3m',
+    scenarios: {
+        my_test: {
+            executor: 'per-vu-iterations',
+            vus: 50,
+            iterations: 1,
+            maxDuration: '3m',
+        },
+    },
 };
 
 export function setup() {
