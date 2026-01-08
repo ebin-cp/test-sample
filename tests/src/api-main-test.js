@@ -10,7 +10,7 @@ export const options = {
             executor: 'per-vu-iterations',
             vus: 50,
             iterations: 1,
-            maxDuration: '2m', 
+            maxDuration: '3m', 
         },
     },
 };
@@ -30,14 +30,14 @@ export default function(data) {
     const assignRes = assignTruck(myKey.imei, myKey.api_key, truckPayload);
     check(assignRes, {"Assign Status 200":(r) => r.status === 200});
 
-    // 2. Stream Metrics
+    // 2. Stream Metrics (Starts 1 minute streaming)
     sendWsMetrics(myKey.imei, myKey.api_key);
 
-    // 3. Short Sleep
-    console.log(`[VU ${__VU}] -`);
-    sleep(10); 
+    // 3. Wait for Stream completion
+    console.log(`[VU ${__VU}] - Streaming data, waiting 65s...`);
+    sleep(65); 
 
-    // 4. De-assign (Ithu ippo ivide idunnu so summary-il result kittum)
+    // 4. De-assign
     console.log(`[VU ${__VU}] - De-assigning truck...`);
     const deRes = deassignTruck(myKey.imei, myKey.api_key);
     check(deRes, {"Deassign Status 200":(r) => r.status === 200});

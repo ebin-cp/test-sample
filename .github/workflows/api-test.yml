@@ -1,14 +1,12 @@
-name: API & WS Test Framework
-
 on: 
   push:
     branches: [ feat/api-ws-tests ]
   workflow_dispatch:
 
 jobs:
-  k6-validation:
+  api-validation-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 7
 
     steps:
       - name: Checkout code
@@ -26,7 +24,8 @@ jobs:
           EOF
           mkdir -p docker/v1
           cp .env docker/v1/.env          
-          docker compose -f ./docker/v1/docker-compose.yml up -d
+          docker compose -f ./docker/v1/docker-compose.yml up -d          
+          sleep 15
       
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
@@ -34,7 +33,10 @@ jobs:
       - name: Execute Test
         id: k6_run
         continue-on-error: true 
-        run: k6 run api-main-test.js --summary-export=../../summary.json --console-output=../../k6_output.log
+        run: |
+          k6 run api-main-test.js \
+          --summary-export=../../summary.json \
+          --console-output=../../k6_output.log
         working-directory: ./tests/src
 
       - name: Final DB & API Validation
