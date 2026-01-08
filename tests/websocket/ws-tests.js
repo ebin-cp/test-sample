@@ -2,15 +2,20 @@ import ws from "k6/ws";
 import { Counter } from "k6/metrics";
 
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
+const calibration_success = new Counter("calibration_success");
 
 export function sendWsMetrics(imei, apiKey) {
     const ws_msg_interval = Number(__ENV.WS_MSG_INTERVAL) || 1000;
-    const ws_duration = Number(__ENV.WS_DURATION) || 60000; // Default 1 minute (60000ms)
+    const ws_duration = Number(__ENV.WS_DURATION) || 60000; 
 
     ws.connect("ws://localhost:8883/api/live", {
         headers: { Origin: "robad.in", Authorization: `${imei} ${apiKey}` },
     }, (socket) => {
+        
         socket.on("open", () => {
+            socket.send("SYNC:CALIBRATION:volume");
+            console.log(`[VU ${__VU}] - Sent: SYNC:CALIBRATION:volume`);
+
             const startTime = Date.now();
 
             const timer = socket.setInterval(() => {
@@ -27,9 +32,20 @@ export function sendWsMetrics(imei, apiKey) {
                 if (Date.now() - startTime >= ws_duration) {
                     clearInterval(timer);
                     socket.close();
-                    console.log(`[VU ${__VU}] - WS Period (${ws_duration/1000}s) finished. Closing.`);
+                    console.log(`[VU ${__VU}] - WS Period finished.`);
                 }
             }, ws_msg_interval);
         });
+
+        socket.on("message", (msg) => {
+            const data = msg.toString();
+            
+            if (data.includes("12,13") && data.includes("2,28") && data.includes("28,26")) {
+                console.log(`[VU ${__VU}]  Calibration Verified: ${data}`);
+                calibration_success.add(1);
+            }
+        });
+
+        socket.on("error", (e) => console.error(`[VU ${__VU}] WS Error:`, e.error()));
     });
 }

@@ -12,6 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         WS_MSG_INTERVAL: [1000]
+        WS_MSG_DURATION: [60000]
     timeout-minutes: 8
 
     steps:
@@ -81,6 +82,9 @@ jobs:
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| Truck Assignment | $ASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
           echo "| Truck De-assignment | $DEASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
+          
+          echo "#### **Volume Mapping Report**">> $GITHUB_STEP_SUMMARY
+          echo "| Calibration Sync | $CALIB_OK | 50 |" >> $GITHUB_STEP_SUMMARY
 
           echo "#### **Measurement & DB Consistency**" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
