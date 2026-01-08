@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
+      env:
         WS_MSG_INTERVAL: [1000]
         WS_MSG_DURATION: [60000]
     timeout-minutes: 8
@@ -39,10 +39,10 @@ jobs:
       - name: Execute Test
         id: k6_run
         continue-on-error: true 
-        run: k6 run api-main-test.js --summary-export=../../summary.json --console-output=./k6_output.log
+        run: k6 run api-main-test.js --summary-export=../../summary.json --console-output=../../k6_output.log
         working-directory: ./tests/src
         env:
-          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
+          WS_MSG_INTERVAL: ${{ env.WS_MSG_INTERVAL }}
 
       - name: Final DB & API Validation
         if: always()
@@ -50,7 +50,8 @@ jobs:
           DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
           DB_NAME: "${{secrets.DB_NAME}}"
         run: |
-          CALIB_OK=$(grep "Calibration Verified" ./tests/src/k6_output.log | wc -l || echo "0")
+          sleep 5
+          CALIB_OK=$(grep "Calibration Verified" k6_output.log | wc -l || echo "0")
           if [ ! -f summary.json ]; then echo "Summary missing"; exit 1; fi
           
           # --- 1. Extract API Metrics from summary.json ---
@@ -122,4 +123,5 @@ jobs:
           name: logs-${{ matrix.WS_MSG_INTERVAL }}
           path: |
             summary.json
-            mismatches.txt         
+            mismatches.txt
+            k6_output.log         
