@@ -30,6 +30,7 @@ export default function(data) {
     // 1. Assign
     const assignRes = assignTruck(myKey.imei, myKey.api_key, truckPayload);
     check(assignRes, {"Assign Status 200":(r) => r.status === 200});
+    sleep(10)
 
     //volume-mapping
     console.log(`[VU ${__VU}] - Verifying Volume Mapping via WS SYNC...`);
