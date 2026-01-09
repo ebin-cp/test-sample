@@ -76,19 +76,6 @@ jobs:
           echo "| Truck Assignment | $ASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
           echo "| Truck De-assignment | $DEASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
           
-          CALIB_OK=$(jq '.metrics.calibration_sync_total.values.count // 0' summary.json)
-          TARGET_VUS=50
-
-          echo "### Calibration Verification Report" >> $GITHUB_STEP_SUMMARY
-          echo "| Metric | Result | Target | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "$CALIB_OK" -ge "$TARGET_VUS" ]; then
-            echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | PASS |" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | FAIL |" >> $GITHUB_STEP_SUMMARY
-          fi
-
           echo "#### **Measurement & DB Consistency**" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
@@ -117,6 +104,22 @@ jobs:
           else
             echo "> **FAILED:** Data inconsistency detected! Matched: $MATCH_COUNT, Mismatched: $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
           fi
+      - name: Calibration Report
+        if: always()
+        run: |
+          CALIB_OK=$(jq '.metrics.calibration_sync_total.count // 0' summary.json)
+          TARGET_VUS=50
+
+          echo "###  Calibration Verification Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Result | Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "$CALIB_OK" -ge "$TARGET_VUS" ]; then
+            echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | FAIL |" >> $GITHUB_STEP_SUMMARY
+            exit 1 # റിപ്പോർട്ട് കാണിച്ച ശേഷം വർക്ക്ഫ്ലോ ഫെയിൽ ആക്കാൻ
+          fi    
 
       - name: Upload Artifacts
         if: always()

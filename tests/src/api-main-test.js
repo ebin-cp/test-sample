@@ -2,6 +2,7 @@ import { createDevices } from "../api/device-create.js";
 import { sendWsMetrics } from "../websocket/ws-measurement.js";
 import { validateApiMeasurements } from "../api/measurement-check.js";
 import { generateRandomTruckData, assignTruck, deassignTruck, getDeviceDetails } from "../api/device-actions.js";
+import { verifyVolumeMapping } from "../websocket/ws-calibration-verify.js";
 import { check, sleep } from 'k6';
 
 export const options = {
@@ -29,6 +30,10 @@ export default function(data) {
     // 1. Assign
     const assignRes = assignTruck(myKey.imei, myKey.api_key, truckPayload);
     check(assignRes, {"Assign Status 200":(r) => r.status === 200});
+
+    //volume-mapping
+    console.log(`[VU ${__VU}] - Verifying Volume Mapping via WS SYNC...`);
+    verifyVolumeMapping(myKey.imei, myKey.api_key, truckPayload);
 
     // 2. Stream Metrics (Starts 1 minute streaming)
     sendWsMetrics(myKey.imei, myKey.api_key);
