@@ -126,4 +126,8 @@ jobs:
           path: |
             summary.json
             mismatches.txt
-            k6_output.log         
+            k6_output.log
+
+      - name: Stop Services
+        if: always()
+        run: docker compose -f ./docker/v1/docker-compose.yml down -v
