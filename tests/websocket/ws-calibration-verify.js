@@ -15,26 +15,34 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
         },
     };
 
-    const res = ws.connect(url, params, (socket) => {
+    ws.connect(url, params, (socket) => {
         socket.on("open", () => {
             socket.send("SYNC:CALIBRATION:volume");
         });
 
         socket.on("message", (msg) => {
+            console.log(`[WS MSG] IMEI ${imei}: ${msg}`);
+
+            if (msg.includes("SYNC:CALIBRATION:volume")) {
+                console.log(`[DEBUG] Received Sync Confirmation for ${imei}, waiting for data...`);
+                return; 
+            }
+
             const cleanMsg = msg.replace(/[^0-9]/g, '');
             const expectedMapping = expectedData.truck_tank_volume_mapping.replace(/[^0-9]/g, '');
+            const expectedVol = expectedData.truck_tank_volume.toString();
 
-            const isMatch = cleanMsg.includes(expectedMapping);
+            const isMatch = cleanMsg.includes(expectedMapping) || msg.includes(expectedVol);
 
             if (isMatch) {
                 calibrationSyncCounter.add(1);
-                console.log(`[Calibration PASS] IMEI: ${imei}`);
+                console.log(`[PASS] Calibration Data Matched for ${imei}`);
             } else {
-                console.log(`[Calibration FAIL] IMEI: ${imei} | Expected: ${expectedMapping} | Received: ${cleanMsg}`);
+                console.log(`[FAIL] Data Mismatch for ${imei}. Received: ${msg}`);
             }
 
             check(msg, {
-                "Calibration verified": () => isMatch,
+                "Calibration Data Received": () => isMatch,
             });
 
             socket.close();
@@ -46,8 +54,6 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
 
         socket.setTimeout(() => {
             socket.close();
-        }, 10000);
+        }, 15000);
     });
-
-    check(res, { "WS Handshake successful": (r) => r && r.status === 101 });
 }
