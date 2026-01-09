@@ -118,7 +118,7 @@ jobs:
             echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | PASS |" >> $GITHUB_STEP_SUMMARY
           else
             echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | FAIL |" >> $GITHUB_STEP_SUMMARY
-            exit 1 # റിപ്പോർട്ട് കാണിച്ച ശേഷം വർക്ക്ഫ്ലോ ഫെയിൽ ആക്കാൻ
+            exit 1 
           fi    
 
       - name: Upload Artifacts

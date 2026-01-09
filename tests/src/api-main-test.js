@@ -30,11 +30,12 @@ export default function(data) {
     // 1. Assign
     const assignRes = assignTruck(myKey.imei, myKey.api_key, truckPayload);
     check(assignRes, {"Assign Status 200":(r) => r.status === 200});
-    sleep(10)
+    sleep(5 + Math.random() * 5);
 
     //volume-mapping
     console.log(`[VU ${__VU}] - Verifying Volume Mapping via WS SYNC...`);
     verifyVolumeMapping(myKey.imei, myKey.api_key, truckPayload);
+    sleep(2);
 
     // 2. Stream Metrics (Starts 1 minute streaming)
     sendWsMetrics(myKey.imei, myKey.api_key);

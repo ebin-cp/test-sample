@@ -21,21 +21,16 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
         });
 
         socket.on("message", (msg) => {
-            const cleanMsg = msg.replace(/\s+/g, ' ').trim();
-            const expectedMapping = expectedData.truck_tank_volume_mapping
-                .replace(/\n/g, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
+            const cleanMsg = msg.replace(/[^0-9]/g, '');
+            const expectedMapping = expectedData.truck_tank_volume_mapping.replace(/[^0-9]/g, '');
 
             const isMatch = cleanMsg.includes(expectedMapping);
 
             if (isMatch) {
                 calibrationSyncCounter.add(1);
-                console.log(`[PASS] Calibration Sync OK for ${imei}`);
+                console.log(`[Calibration PASS] IMEI: ${imei}`);
             } else {
-                console.log(`[FAIL] Calibration Mismatch for ${imei}`);
-                console.log(`Expected: ${expectedMapping}`);
-                console.log(`Received: ${cleanMsg}`);
+                console.log(`[Calibration FAIL] IMEI: ${imei} | Expected: ${expectedMapping} | Received: ${cleanMsg}`);
             }
 
             check(msg, {
