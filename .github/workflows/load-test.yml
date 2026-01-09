@@ -63,6 +63,12 @@ jobs:
           DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
                          docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
 
+          if [ "$WS_SENT" -gt 0 ] && [ "$ACTUAL_ROWS" -eq "$EXPECTED_ROWS" ]; then
+            STATUS="SUCCESS"
+          else
+            STATUS="FAILED"
+          fi
+
           # 3. Generate GitHub Job Summary (UI Table)
           echo "###  Load Test Summary" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
@@ -71,6 +77,15 @@ jobs:
           echo "| WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
           echo "| Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
           echo "| Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$STATUS" == "FAILED" ]; then
+            if [ "$WS_SENT" -eq 0 ]; then
+               echo "::error::No messages were sent by K6."
+            else
+               echo "::error::Data mismatch! Expected exactly $EXPECTED_ROWS but found $ACTUAL_ROWS."
+            fi
+            exit 1
+          fi
 
           # 4. Final Integrity Check
           if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ] || [ "$WS_SENT" -eq 0 ]; then
