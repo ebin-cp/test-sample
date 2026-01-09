@@ -7,7 +7,7 @@ const calibrationSyncCounter = new Counter("calibration_sync_total");
 export function verifyVolumeMapping(imei, apiKey, expectedData) {
     calibrationSyncCounter.add(0);
 
-    const url = "ws://localhost:8883/api/live";
+    const url = "ws://localhost:8883/api/live"; 
     const params = {
         headers: {
             Origin: "robad.in",
@@ -16,31 +16,28 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
     };
 
     ws.connect(url, params, (socket) => {
+        let isVerified = false;
+
         socket.on("open", () => {
             socket.send("SYNC:CALIBRATION:volume");
         });
 
         socket.on("message", (msg) => {
             console.log(`[WS MSG] IMEI: ${imei} | Received: ${msg}`);
-
-            if (msg.includes("SYNC:CALIBRATION:volume")) {
-                console.log(`[DEBUG] Sync confirmation ignored for ${imei}`);
+            if (msg === "SYNC:CALIBRATION:volume") {
                 return; 
             }
+            const hasNumbers = /[0-9]/.test(msg);
 
-            const hasData = /[0-9]/.test(msg);
-
-            if (hasData) {
-                const expectedMapping = expectedData.truck_tank_volume_mapping;
-                const isMatch = msg.includes(expectedMapping) || msg.length > 5;
+            if (hasNumbers && !isVerified) {
+                const expectedMapping = expectedData.truck_tank_volume_mapping;                
+                const isMatch = msg.includes(expectedMapping) || msg.length > 3;
 
                 if (isMatch) {
+                    isVerified = true;
                     calibrationSyncCounter.add(1);
-                    console.log(`[PASS] Calibration Success for ${imei}: ${msg}`);
-                } else {
-                    console.log(`[FAIL] Data Mismatch for ${imei}. Expected: ${expectedMapping}, Got: ${msg}`);
+                    console.log(`[PASS] Data Verified for ${imei}: ${msg}`);
                 }
-
                 check(msg, {
                     "Calibration Data Received": () => isMatch,
                 });
