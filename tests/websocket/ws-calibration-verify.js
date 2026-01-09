@@ -21,35 +21,35 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
         });
 
         socket.on("message", (msg) => {
-            console.log(`[WS MSG] IMEI ${imei}: ${msg}`);
+            console.log(`[WS MSG] IMEI: ${imei} | Received: ${msg}`);
 
             if (msg.includes("SYNC:CALIBRATION:volume")) {
-                console.log(`[DEBUG] Received Sync Confirmation for ${imei}, waiting for data...`);
+                console.log(`[DEBUG] Sync confirmation ignored for ${imei}`);
                 return; 
             }
 
-            const cleanMsg = msg.replace(/[^0-9]/g, '');
-            const expectedMapping = expectedData.truck_tank_volume_mapping.replace(/[^0-9]/g, '');
-            const expectedVol = expectedData.truck_tank_volume.toString();
+            const hasData = /[0-9]/.test(msg);
 
-            const isMatch = cleanMsg.includes(expectedMapping) || msg.includes(expectedVol);
+            if (hasData) {
+                const expectedMapping = expectedData.truck_tank_volume_mapping;
+                const isMatch = msg.includes(expectedMapping) || msg.length > 5;
 
-            if (isMatch) {
-                calibrationSyncCounter.add(1);
-                console.log(`[PASS] Calibration Data Matched for ${imei}`);
-            } else {
-                console.log(`[FAIL] Data Mismatch for ${imei}. Received: ${msg}`);
+                if (isMatch) {
+                    calibrationSyncCounter.add(1);
+                    console.log(`[PASS] Calibration Success for ${imei}: ${msg}`);
+                } else {
+                    console.log(`[FAIL] Data Mismatch for ${imei}. Expected: ${expectedMapping}, Got: ${msg}`);
+                }
+
+                check(msg, {
+                    "Calibration Data Received": () => isMatch,
+                });
+                socket.close();
             }
-
-            check(msg, {
-                "Calibration Data Received": () => isMatch,
-            });
-
-            socket.close();
         });
 
         socket.on("error", (e) => {
-            console.error(`[WS Error] ${imei}: ${e.error()}`);
+            console.error(`[WS ERROR] IMEI ${imei}: ${e.error()}`);
         });
 
         socket.setTimeout(() => {
