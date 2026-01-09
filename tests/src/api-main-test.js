@@ -11,7 +11,7 @@ export const options = {
             executor: 'per-vu-iterations',
             vus: 50,
             iterations: 1,
-            maxDuration: '3m', 
+            maxDuration: '2m', 
         },
     },
 };
@@ -30,7 +30,7 @@ export default function(data) {
     // 1. Assign
     const assignRes = assignTruck(myKey.imei, myKey.api_key, truckPayload);
     check(assignRes, {"Assign Status 200":(r) => r.status === 200});
-    sleep(5 + Math.random() * 5);
+    sleep(20)
 
     //volume-mapping
     console.log(`[VU ${__VU}] - Verifying Volume Mapping via WS SYNC...`);
