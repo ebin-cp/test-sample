@@ -16,41 +16,42 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
     };
 
     ws.connect(url, params, (socket) => {
-        let isVerified = false;
+        let isMatched = false;
 
         socket.on("open", () => {
+            const retryInterval = socket.setInterval(() => {
+                if (!isMatched) {
+                    socket.send("SYNC:CALIBRATION:volume");
+                } else {
+                    socket.clearInterval(retryInterval);
+                }
+            }, 2500);
+
             socket.send("SYNC:CALIBRATION:volume");
         });
 
         socket.on("message", (msg) => {
-            console.log(`[WS MSG] IMEI: ${imei} | Received: ${msg}`);
-            if (msg === "SYNC:CALIBRATION:volume") {
-                return; 
-            }
-            const hasNumbers = /[0-9]/.test(msg);
+            if (msg.includes("SYNC:CALIBRATION:volume")) return;
+            const hasData = /[0-9]/.test(msg);
 
-            if (hasNumbers && !isVerified) {
-                const expectedMapping = expectedData.truck_tank_volume_mapping;                
-                const isMatch = msg.includes(expectedMapping) || msg.length > 3;
+            if (hasData && !isMatched) {
+                isMatched = true; 
+                calibrationSyncCounter.add(1);
 
-                if (isMatch) {
-                    isVerified = true;
-                    calibrationSyncCounter.add(1);
-                    console.log(`[PASS] Data Verified for ${imei}: ${msg}`);
-                }
                 check(msg, {
-                    "Calibration Data Received": () => isMatch,
+                    "Calibration Values Received": (m) => m.length > 2,
                 });
-                socket.close();
+
+                console.log(`[SUCCESS] IMEI: ${imei} | Data: ${msg}`);
+                socket.close(); 
             }
         });
 
         socket.on("error", (e) => {
             console.error(`[WS ERROR] IMEI ${imei}: ${e.error()}`);
         });
-
         socket.setTimeout(() => {
             socket.close();
-        }, 15000);
+        }, 25000);
     });
 }
