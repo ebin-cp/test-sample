@@ -5,6 +5,8 @@ import { Counter } from "k6/metrics";
 const calibrationSyncCounter = new Counter("calibration_sync_total");
 
 export function verifyVolumeMapping(imei, apiKey, expectedData) {
+    calibrationSyncCounter.add(0);
+
     const url = "ws://localhost:8883/api/live";
     const params = {
         headers: {
@@ -21,12 +23,14 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
         socket.on("message", (msg) => {
             const expectedMapping = expectedData.truck_tank_volume_mapping;
             const expectedVolume = expectedData.truck_tank_volume.toString();
-
             const mappingMatch = msg.includes(expectedMapping);
             const volumeMatch = msg.includes(expectedVolume);
 
             if (mappingMatch && volumeMatch) {
                 calibrationSyncCounter.add(1);
+                console.log(`[Calibration PASS] IMEI: ${imei}`);
+            } else {
+                console.log(`[Calibration FAIL] IMEI: ${imei} | Expected: ${expectedMapping} | Got: ${msg}`);
             }
 
             check(msg, {
