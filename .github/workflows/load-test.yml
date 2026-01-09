@@ -1,7 +1,7 @@
 name: 50-Device Concurrent WebSocket Messaging stress test
 on: 
   push:
-    branches: [ feat/api-ws-tests ]
+    # branches: [ feat/api-ws-tests ]
   workflow_dispatch:
 
 jobs:
