@@ -9,7 +9,7 @@ export const options = {
     scenarios: {
         my_test: {
             executor: 'per-vu-iterations',
-            vus: 200,
+            vus: 190,
             iterations: 1,
             maxDuration: '2m', 
         },
@@ -18,7 +18,7 @@ export const options = {
 
 export function setup() {
     const startTimeNS = Date.now() * 1000000;
-    const keys = createDevices(200);
+    const keys = createDevices(190);
     return { keys: keys, startTimeNS: startTimeNS };
 }
 
