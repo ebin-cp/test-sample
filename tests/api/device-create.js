@@ -1,6 +1,6 @@
 import http from "k6/http";
 
-export function createDevices(count = 75) {
+export function createDevices(count = 100) {
     const deviceKeys = [];
     const generateIMEI = () => Array.from({length: 15}, () => Math.floor(Math.random() * 10)).join("");
 
