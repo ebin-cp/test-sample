@@ -3,7 +3,7 @@ import { Counter } from "k6/metrics";
 
 const ws_metrics_sent_msgs = new Counter("ws_metrics_sent_msgs");
 
-export function sendWsMetrics(imei, apiKey, interval = 1000, duration = 60000) {
+export function sendWsMetrics(imei, apiKey, interval = 500, duration = 60000) {
     ws.connect("ws://localhost:8883/api/live", {
         headers: { Origin: "robad.in", Authorization: `${imei} ${apiKey}` },
     }, (socket) => {
