@@ -108,7 +108,7 @@ jobs:
         if: always()
         run: |
           CALIB_OK=$(jq -r '.metrics.calibration_sync_total.count // 0' summary.json)
-          TARGET_VUS=${TOTAL_DEVICES}
+          TARGET_VUS = $TOTAL_DEVICES
 
           echo "###  Calibration Verification Report" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Result | Target | Status |" >> $GITHUB_STEP_SUMMARY
