@@ -7,7 +7,7 @@ const calibrationSyncCounter = new Counter("calibration_sync_total");
 export function verifyVolumeMapping(imei, apiKey, expectedData) {
     calibrationSyncCounter.add(0);
 
-    const url = "ws://localhost:8883/api/live"; 
+    const url = "ws://localhost:8883/api/live";
     const params = {
         headers: {
             Origin: "robad.in",
@@ -31,11 +31,16 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
         });
 
         socket.on("message", (msg) => {
-            if (msg.includes("SYNC:CALIBRATION:volume")) return;
-            const hasData = /[0-9]/.test(msg);
+            if (!msg.includes("SYNC:CALIBRATION:volume") || !msg.length) return;
+            const index = msg.indexOf("\n");
+            const mapping_only_msg = index === -1 ? "" : msg.substring(index + 1);
+            if (!mapping_only_msg.length) return;
+            const hasData = /^(\d+,\d+(\.\d+)?(\r?\n|$)){3,100}$/.test(
+                mapping_only_msg,
+            );
 
             if (hasData && !isMatched) {
-                isMatched = true; 
+                isMatched = true;
                 calibrationSyncCounter.add(1);
 
                 check(msg, {
@@ -43,7 +48,7 @@ export function verifyVolumeMapping(imei, apiKey, expectedData) {
                 });
 
                 console.log(`[SUCCESS] IMEI: ${imei} | Data: ${msg}`);
-                socket.close(); 
+                socket.close();
             }
         });
 
