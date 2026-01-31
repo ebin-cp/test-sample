@@ -11,7 +11,7 @@ export const options = {
             executor: 'per-vu-iterations',
             vus: 200,
             iterations: 1,
-            maxDuration: '2m', 
+            maxDuration: '1m', 
         },
     },
 };
