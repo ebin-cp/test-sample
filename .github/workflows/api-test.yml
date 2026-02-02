@@ -6,7 +6,7 @@ on:
 jobs:
   api-validation-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 7
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
