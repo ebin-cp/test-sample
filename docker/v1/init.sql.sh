@@ -17,12 +17,13 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 
 CREATE TABLE IF NOT EXISTS device_monitor_log (
-    id VARCHAR(30) PRIMARY KEY,
     imei VARCHAR(50) NOT NULL,
     measurement VARCHAR(255) NOT NULL,
     fields JSON,
     tags JSON,
     timestamp BIGINT NOT NULL,
+
+    PRIMARY KEY (imei, measurement, timestamp),
 
     CONSTRAINT fk_device_imei
         FOREIGN KEY (imei)

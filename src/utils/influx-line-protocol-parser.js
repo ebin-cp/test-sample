@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import { INFLUX_LINE_PROTOCOL_PARSED } from "../types/message.js";
 import z from "zod";
+import logfmt from "./logfmt.js";
+
 const influx_line_protocol_parser = (msg) => {
     if (!msg) {
         reject({ res: [], err: new Error("Invalid message") });
@@ -12,14 +14,22 @@ const influx_line_protocol_parser = (msg) => {
         d.stdout.on("data", (data) => {
             const res = data.toString();
             if (!res.startsWith("[")) {
-                console.log("Invalid JSON\n", res);
+                logfmt("error", {
+                    event: "Influx line protocol parser",
+                    msg: "Invalid JSON",
+                    data: res,
+                });
                 reject({ res: [], err: new Error(res) });
                 return;
             }
             const res_json = JSON.parse(res);
             const validate = INFLUX_LINE_PROTOCOL_PARSED.array().safeParse(res_json);
             if (validate.error) {
-                console.error(validate.error.message);
+                logfmt("error", {
+                    event: "Influx line protocol parser",
+                    msg: "Zod validation",
+                    ...z.treeifyError(validate.error),
+                });
                 reject({ res: [], err: new Error(validate.error.message) });
                 return;
             }

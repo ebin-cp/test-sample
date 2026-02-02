@@ -4,16 +4,26 @@ import {
     INFLUX_LINE_PROTOCOL_SCHEMA,
 } from "../../types/message.js";
 import deviceRoutes from "../../routes/devices.js";
+import logfmt from "../../utils/logfmt.js";
+
 const wss = new WebSocketServer({ noServer: true });
 const clientDetails = new Map();
 wss.on("connection", async function connection(ws, request) {
-    ws.on("error", console.error);
+    ws.on("error", () => {
+        logfmt("error", {
+            event: "Websocket",
+            msg: "Websocket error event triggered",
+        });
+    });
     if (!request.headers.authorization) {
         ws.close(401);
         return;
     }
     const [client_imei, client_api] = request.headers.authorization.split(" ");
-    console.log(`Device ${client_imei} connected using API KEY ${client_api}`);
+    logfmt("info", {
+        event: "Device Connect",
+        imei: client_imei,
+    });
     clientDetails.set(ws, {
         api_key: `${client_api}`,
         imei: `${client_imei}`,
@@ -27,15 +37,18 @@ wss.on("connection", async function connection(ws, request) {
         request,
         device_connected_msg,
     );
-    console.log(connectedPresenceRes.statusCode, connectedPresenceRes.body);
+    logfmt(connectedPresenceRes.statusCode !== 200 ? "error" : "info", {
+        event: "Device Presence",
+        ...connectedPresenceRes,
+    });
     ws.on("message", async function message(data) {
         const details = clientDetails.get(ws);
-        if (details) {
-            console.log(
-                `Received message from IMEI (${details.imei}): \n${data.toString()}`,
-            );
-        } else {
-            console.warn("Details not found for this client.");
+        if (!details) {
+            logfmt("warn", {
+                event: "Incoming Message",
+                msg: "Device details not found",
+                imei: details.imei,
+            });
         }
         const validate = INFLUX_LINE_PROTOCOL_SCHEMA.safeParse(data.toString());
         const directive_validate = DEVICE_DIRECTIVES.safeParse(data.toString());
@@ -46,6 +59,12 @@ wss.on("connection", async function connection(ws, request) {
             }
             details?.client.send(errorMessage);
             return;
+        }
+        for (const msg_data of validate.data.split("\n")) {
+            logfmt("info", {
+                event: "Incoming Message",
+                msg: msg_data,
+            });
         }
         if (directive_validate.error) {
             const device_measurements_input = {
@@ -59,7 +78,10 @@ wss.on("connection", async function connection(ws, request) {
             if (measurementRes.statusCode === 400) {
                 details.client.send(measurementRes.body);
             }
-            console.log(measurementRes.statusCode, measurementRes.body);
+            logfmt(measurementRes.statusCode !== 200 ? "error" : "info", {
+                event: "Device Measurements",
+                ...measurementRes,
+            });
             return;
         }
 
@@ -81,11 +103,20 @@ wss.on("connection", async function connection(ws, request) {
             message: `${client_imei} disconnected`,
         };
         const presenceRes = await deviceRoutes(request, device_disconnected_msg);
-        console.log(presenceRes.statusCode, presenceRes.body);
-        console.log("Client Disconnected");
+        logfmt(presenceRes.statusCode !== 200 ? "error" : "info", {
+            event: "Device Presence",
+            ...presenceRes,
+        });
+        logfmt("info", {
+            event: "Device Disconnect",
+            imei: client_imei,
+        });
     });
 });
 wss.on("ping", (_ws, req) => {
-    console.log(req.headers);
+    logfmt("info", {
+        event: "Websocket Ping",
+        ...req.headers,
+    });
 });
 export { wss, clientDetails };

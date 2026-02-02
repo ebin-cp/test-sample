@@ -123,13 +123,9 @@ http://localhost:8883/api/v1/device/measurements?imei=3574920816425739&measureme
 
 ### 4. List All Devices
 
-Retrieve a list of all registered devices.
-
 **Endpoint**: `GET http://localhost:8883/api/v1/device`
 
 ### 5. Assign Truck To Device
-
-Retrieve a list of all registered devices.
 
 **Endpoint**: `PUT http://localhost:8883/api/v1/device/assign-truck`
 
@@ -149,13 +145,27 @@ Retrieve a list of all registered devices.
 
 ### 6. De-Assign Truck To Device
 
-Retrieve a list of all registered devices.
-
 **Endpoint**: `PUT http://localhost:8883/api/v1/device/deassign-truck`
 
 **Query Parameters**:
 
 - `imei` (required): Device IMEI
+
+### 5. Set Device Firmware
+
+**Endpoint**: `PUT http://localhost:8883/api/v1/device/set-firmware`
+
+**Query Parameters**:
+
+- `imei` (required): Device IMEI
+
+**Request Body**:
+
+```json
+{
+    "firmware_url":"<Signed S3 URL>",
+}
+```
 
 
 ## Timestamp Format

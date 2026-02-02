@@ -12,4 +12,5 @@ function getRequestBody(req) {
 		});
 	});
 }
+
 export default getRequestBody;

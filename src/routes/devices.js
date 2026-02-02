@@ -1,7 +1,31 @@
 import { DeviceService } from "../services/device/device.js";
 import getRequestBody from "../utils/get-request-body.js";
-import dbConnection from "../services/db-connection/db-connection.js";
 import { DEVICE_SCHEMA } from "../types/device.js";
+import dbConnectionPool from "../services/db-connection/db-connection.js";
+import logfmt from "../utils/logfmt.js";
+
+const deviceService = new DeviceService(dbConnectionPool);
+
+process.on("SIGINT", async () => {
+    logfmt("error", {
+        event: "Recieved SIGINT",
+        msg: "Shutdown() triggered",
+    });
+    await deviceService.shutdown();
+    await dbConnectionPool.end();
+    process.exit(0);
+});
+
+process.on("SIGTERM", async () => {
+    logfmt("error", {
+        event: "Recieved SIGTERM",
+        msg: "Shutdown() triggered",
+    });
+    await deviceService.shutdown();
+    await dbConnectionPool.end();
+    process.exit(0);
+});
+
 async function deviceRoutes(req, ws_msg) {
     const url_parsed = new URL(
         `http://${process.env.HOST ?? "localhost"}${req.url}`,
@@ -9,23 +33,24 @@ async function deviceRoutes(req, ws_msg) {
     const routeKey = ws_msg
         ? ws_msg.event
         : `${req.method} ${url_parsed.pathname}`;
-    const connection = await dbConnection();
     const [client_imei, client_api] = ws_msg
         ? req.headers.authorization.split(" ")
         : ["", ""];
-    const devices = new DeviceService(connection);
     const response = {
         statusCode: 403,
         body: JSON.stringify({ error: "Invalid" }),
     };
     if (!url_parsed) {
-        console.log("Request URL error", url_parsed);
+        logfmt("error", {
+            event: "Request URL error",
+            msg: "Undefined url_parsed",
+        });
         return response;
     }
     switch (routeKey) {
         case "GET /api/v1/device": {
             const imei = url_parsed.searchParams.get("imei");
-            const readReq = await devices.get(imei).catch((err) => {
+            const readReq = await deviceService.get(imei).catch((err) => {
                 return {
                     error: err,
                 };
@@ -51,11 +76,13 @@ async function deviceRoutes(req, ws_msg) {
                 response.body = "Invalid IMEI. Should be a 15 or 16 digit number";
                 break;
             }
-            const createReq = await devices.create(reqBodyJson.imei).catch((err) => {
-                return {
-                    error: err,
-                };
-            });
+            const createReq = await deviceService
+                .create(reqBodyJson.imei)
+                .catch((err) => {
+                    return {
+                        error: err,
+                    };
+                });
             if (createReq.error) {
                 response.statusCode = 500;
                 break;
@@ -72,10 +99,9 @@ async function deviceRoutes(req, ws_msg) {
             const reqBody = await getRequestBody(req);
             const reqBodyJson = JSON.parse(reqBody);
             const imei = url_parsed.searchParams.get("imei");
-            const assignReq = await devices
+            const assignReq = await deviceService
                 .assignTruck(reqBodyJson, imei)
                 .then((res) => {
-                    console.log(res);
                     return res;
                 });
             if (assignReq.error) {
@@ -91,10 +117,11 @@ async function deviceRoutes(req, ws_msg) {
         }
         case "PUT /api/v1/device/deassign-truck": {
             const imei = url_parsed.searchParams.get("imei");
-            const deassignReq = await devices.deassignTruck(imei).then((res) => {
-                console.log(res);
-                return res;
-            });
+            const deassignReq = await deviceService
+                .deassignTruck(imei)
+                .then((res) => {
+                    return res;
+                });
             if (deassignReq.error) {
                 response.statusCode = 500;
                 break;
@@ -104,6 +131,26 @@ async function deviceRoutes(req, ws_msg) {
                 response.statusCode === 200
                     ? JSON.stringify(deassignReq.res)
                     : JSON.stringify(deassignReq.reason);
+            break;
+        }
+        case "PUT /api/v1/device/set-firmware": {
+            const reqBody = await getRequestBody(req);
+            const reqBodyJson = JSON.parse(reqBody);
+            const imei = url_parsed.searchParams.get("imei");
+            const setFirmwareReq = await deviceService
+                .setFirmwareUrl(reqBodyJson, imei)
+                .then((res) => {
+                    return res;
+                });
+            if (setFirmwareReq.error) {
+                response.statusCode = 500;
+                break;
+            }
+            response.statusCode = setFirmwareReq.code ? setFirmwareReq.code : 500;
+            response.body =
+                response.statusCode === 200
+                    ? JSON.stringify(setFirmwareReq.res)
+                    : JSON.stringify(setFirmwareReq.reason);
             break;
         }
         case "GET /api/v1/device/measurements": {
@@ -121,8 +168,8 @@ async function deviceRoutes(req, ws_msg) {
                 response.statusCode = 400;
                 break;
             }
-            const readReq = await devices
-                .getMonitorLog(imei, measurement, timeperiod)
+            const readReq = await deviceService
+                .getMeasurementLog(imei, measurement, timeperiod)
                 .catch((err) => {
                     return { error: err };
                 });
@@ -144,11 +191,14 @@ async function deviceRoutes(req, ws_msg) {
                     response.statusCode = 400;
                     break;
                 }
-                const presenceRes = await devices
+                const presenceRes = await deviceService
                     .devicePresence(imei, event)
                     .catch((err) => {
                         response.statusCode = 500;
-                        console.error(err);
+                        logfmt("error", {
+                            event: "Presence Service",
+                            msg: err,
+                        });
                     });
                 if (presenceRes.error) {
                     response.statusCode = 500;
@@ -164,11 +214,14 @@ async function deviceRoutes(req, ws_msg) {
         }
         case "ws_measurements_msg": {
             if (ws_msg) {
-                const measurementRes = await devices
-                    .insertMonitorLog(ws_msg.message, client_imei)
+                const measurementRes = await deviceService
+                    .bufferMeasurementLog(ws_msg.message, client_imei)
                     .catch((err) => {
                         response.statusCode = 500;
-                        console.error(err);
+                        logfmt("error", {
+                            event: "Device Measurement Service",
+                            msg: err,
+                        });
                     });
                 if (measurementRes.error) {
                     response.statusCode = 500;
@@ -185,10 +238,13 @@ async function deviceRoutes(req, ws_msg) {
         }
         case "ws_directive_msg": {
             if (ws_msg) {
-                const deviceDirectiveRes = await devices
+                const deviceDirectiveRes = await deviceService
                     .deviceDirective(client_imei, ws_msg)
                     .catch((err) => {
-                        console.error(err);
+                        logfmt("error", {
+                            event: "Device Directive Service",
+                            msg: err,
+                        });
                         return { error: err };
                     });
                 if (deviceDirectiveRes.error) {

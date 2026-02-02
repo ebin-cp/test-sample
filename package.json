@@ -2,8 +2,7 @@
 	"name": "genrobotics-gmmamoth-backend",
 	"version": "1.0.0",
 	"scripts": {
-		"start": "node src/main.js",
-		"test_db": "node dist/services/db-connection/db-connection.js"
+		"start": "node src/main.js"
 	},
 	"type": "module",
 	"keywords": [],

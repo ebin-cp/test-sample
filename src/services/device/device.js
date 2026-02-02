@@ -1,6 +1,6 @@
 import { ulid } from "ulid";
 import influx_line_protocol_parser from "../../utils/influx-line-protocol-parser.js";
-import { TRUCK_INFO_INPUT_SCHEMA } from "../../types/device.js";
+import { TRUCK_INFO_INPUT_SCHEMA, DEVICE_FIRMWARE_INPUT_SCHEMA } from "../../types/device.js";
 import z from "zod";
 import {
     deassignTruck,
@@ -8,30 +8,38 @@ import {
     deviceInsertion,
     deviceMonitorLogInsertion,
     deviceMonitorLogQuery,
+    getDeviceFields,
     getDevices,
-    getDeviceTankVolumeCalibration,
     getOneDevice,
-    insertTruckFields,
+    insertDeviceFields,
     truckInfoElementIndex,
     truckInfoValueExistence,
     updateDevicePresence,
-    updateTruckFields,
+    updateDeviceFields,
 } from "./queries.js";
+import logfmt from "../../utils/logfmt.js";
+
+const measurementBuffer = [];
 
 export class DeviceService {
-    dbConnection;
-    constructor(db) {
-        this.dbConnection = db;
+    constructor(pool) {
+        this.connectionPool = pool;
+        this.measurementBuffer = [];
+        this.flushMeasurementrLog();
+        this.currentTimer = null;
+        this.isShuttingDown = false;
+        this.isSyncing = false;
     }
-
     async get(imei) {
         const query = imei ? getOneDevice : getDevices;
         const params = imei ? [imei] : [];
-        const rows = await this.dbConnection.execute(query, params).catch((err) => {
-            return {
-                error: err,
-            };
-        });
+        const rows = await this.connectionPool
+            .execute(query, params)
+            .catch((err) => {
+                return {
+                    error: err,
+                };
+            });
 
         if (rows.error) {
             return { code: 500, reason: rows.error.message };
@@ -51,7 +59,7 @@ export class DeviceService {
             modified_at: Date.now(),
         };
 
-        const deviceExistenceValidate = await this.dbConnection.query(
+        const deviceExistenceValidate = await this.connectionPool.query(
             deviceExistence,
             [imei],
         );
@@ -62,7 +70,7 @@ export class DeviceService {
                 reason: "Device already exists",
             };
         }
-        const res = await this.dbConnection
+        const res = await this.connectionPool
             .execute(deviceInsertion, [
                 device.deviceId,
                 device.imei,
@@ -86,7 +94,7 @@ export class DeviceService {
         return { code: 500 };
     }
 
-    async insertMonitorLog(msg, imei) {
+    async bufferMeasurementLog(msg, imei) {
         const msgToJson = await influx_line_protocol_parser(msg).catch((err) => {
             return { error: err };
         });
@@ -96,7 +104,7 @@ export class DeviceService {
                     ? 400
                     : 500,
                 reason: msgToJson.error.err.message.startsWith("Error decoding")
-                    ? "ERROR:INVALID_MESSAGE:400"
+                    ? "ERROR:INVALID_MEASUREMENT:400"
                     : "ERROR:INFLUX_LINE_PROTOCOL_PARSER:500",
             };
         }
@@ -112,46 +120,143 @@ export class DeviceService {
         if (recieved_imei !== imei) {
             return { code: 400, reason: "ERROR:IMEI_MISMATCH:400" };
         }
-        const msgToInsert = [];
         for (const log_item of msgToJson.res) {
             const measurementRegex = /(volume|cellular|firmware|battery)/;
             if (imei && measurementRegex.test(log_item.measurement)) {
-                msgToInsert.push([
-                    ulid(),
+                const stripImei = log_item.tags.filter((i) => i.key !== "imei");
+                const tagsWithoutImei = stripImei ? stripImei : [];
+                this.measurementBuffer.push([
                     imei,
                     log_item.measurement,
-                    JSON.stringify(log_item.tags.filter((i) => i.key !== "imei")),
+                    JSON.stringify(tagsWithoutImei),
                     JSON.stringify(log_item.fields),
                     log_item.timestamp,
+                    JSON.stringify(tagsWithoutImei),
+                    JSON.stringify(log_item.fields),
                 ]);
             }
         }
-        const res = await this.dbConnection
-            .batch(deviceMonitorLogInsertion, msgToInsert)
+        logfmt("info", {
+            event: "Buffer Measurement Service",
+            buffer_length: measurementBuffer.length,
+        });
+        return {
+            code: 200,
+            res: "Message added to buffer",
+        };
+    }
+    async flushMeasurementrLog() {
+        if (this.isShuttingDown || this.isSyncing) return;
+        const dataToWrite = this.measurementBuffer.splice(
+            0,
+            this.measurementBuffer.length,
+        );
+
+        if (dataToWrite.length === 0) {
+            this.currentTimer = setTimeout(() => this.flushMeasurementrLog(), 1000);
+            return;
+        }
+
+        logfmt("info", {
+            event: "Flush Measurement Service",
+            msg: "Buffer length before flushing",
+            buffer_length: dataToWrite.length,
+        });
+
+        logfmt("info", {
+            event: "Flush Measurement Service",
+            msg: "Waiting to flush buffer to database..",
+        });
+
+        this.isSyncing = true;
+        await this.connectionPool
+            .batch(deviceMonitorLogInsertion, dataToWrite)
+            .then(() => {
+                logfmt("info", {
+                    event: "Flush Measurement Service",
+                    msg: `Flushed ${dataToWrite.length} metrics.`,
+                });
+            })
             .catch((err) => {
+                logfmt("error", {
+                    event: "Flush Measurement Service",
+                    msg: `Failed to flush ${dataToWrite.length} metrics.`,
+                    error: err,
+                });
+                this.measurementBuffer.unshift(...dataToWrite);
+                logfmt("info", {
+                    event: "Flush Measurement Service",
+                    msg: "Buffer length after flushing",
+                    buffer_length: dataToWrite.length,
+                });
                 return {
                     error: err,
                 };
+            })
+            .finally(() => {
+                this.isSyncing = false;
+                if (!this.isShuttingDown) {
+                    if (this.measurementBuffer.length > 1000) {
+                        logfmt("info", {
+                            event: "Flush Measurement Service",
+                            msg: `Instant flush batch of ${this.measurementBuffer.length} metrics.`,
+                        });
+                        setImmediate(() => this.flushMeasurementrLog());
+                    } else {
+                        this.currentTimer = setTimeout(
+                            () => this.flushMeasurementrLog(),
+                            1000,
+                        );
+                    }
+                }
             });
-        if (res.error) {
-            return { code: 500, reason: res.error.message };
-        }
-
-        const funcRes = [];
-        for (const r of res) {
-            funcRes.push(r.affectedRows < 0 ? 500 : 200);
-        }
-        return {
-            code: funcRes.includes(500) ? 500 : 200,
-            res: funcRes.includes(500) ? undefined : "Success",
-            reason: funcRes.includes(500)
-                ? "Failed to insert to database"
-                : undefined,
-        };
     }
 
-    async getMonitorLog(imei, measurement, timeperiod) {
-        const rows = await this.dbConnection
+    async shutdown() {
+        this.isShuttingDown = true;
+
+        if (this.currentTimer) {
+            clearTimeout(this.currentTimer);
+        }
+
+        logfmt("info", {
+            event: "Flush Measurement Service",
+            msg: `Shutting down. Flushing ${this.measurementBuffer.length} remaining messages...`,
+        });
+
+        if (this.measurementBuffer.length > 0) {
+            await this.flushManual();
+        }
+
+        logfmt("info", {
+            event: "Flush Measurement Service",
+            msg: "Flush Complete.",
+        });
+    }
+
+    async flushManual() {
+        const dataToWrite = this.measurementBuffer.splice(
+            0,
+            this.measurementBuffer.length,
+        );
+        await this.connectionPool
+            .batch(deviceMonitorLogInsertion, dataToWrite)
+            .then(() => {
+                logfmt("info", {
+                    event: "Flush Measurement Service",
+                    msg: `Flushed final batch of ${dataToWrite.length} metrics.`,
+                });
+            })
+            .catch((err) => {
+                logfmt("info", {
+                    event: "Flush Measurement Service",
+                    msg: `Failed to flush final batch of ${dataToWrite.length} metrics.`,
+                });
+            });
+    }
+
+    async getMeasurementLog(imei, measurement, timeperiod) {
+        const rows = await this.connectionPool
             .execute(deviceMonitorLogQuery, [imei, measurement, ...timeperiod])
             .catch((err) => {
                 return {
@@ -167,7 +272,7 @@ export class DeviceService {
     }
 
     async devicePresence(imei, event) {
-        const updateQuery = await this.dbConnection
+        const updateQuery = await this.connectionPool
             .execute(updateDevicePresence, [event, imei])
             .catch((err) => {
                 return {
@@ -198,7 +303,7 @@ export class DeviceService {
             });
         }
 
-        const deviceExistenceValidate = await this.dbConnection.query(
+        const deviceExistenceValidate = await this.connectionPool.query(
             deviceExistence,
             [imei],
         );
@@ -210,7 +315,7 @@ export class DeviceService {
             };
         }
 
-        const duplicateValidation = await this.dbConnection.query(
+        const duplicateValidation = await this.connectionPool.query(
             truckInfoValueExistence,
             ["truck_reg_no", validate.data.truck_reg_no, imei],
         );
@@ -223,7 +328,7 @@ export class DeviceService {
         }
 
         for (const { key, value } of insertInfo) {
-            const searchRes = await this.dbConnection
+            const searchRes = await this.connectionPool
                 .query(truckInfoElementIndex, [key, key, imei])
                 .catch((err) => ({ error: err }));
 
@@ -238,14 +343,14 @@ export class DeviceService {
 
             if (path) {
                 const indexPath = path.replace(".key", "");
-                query = updateTruckFields;
+                query = updateDeviceFields;
                 params = [indexPath, key, value, Date.now(), imei];
             } else {
-                query = insertTruckFields;
+                query = insertDeviceFields;
                 params = [key, value, Date.now(), imei];
             }
 
-            const updateRes = await this.dbConnection
+            const updateRes = await this.connectionPool
                 .query(query, params)
                 .catch((err) => ({ error: err }));
 
@@ -263,7 +368,7 @@ export class DeviceService {
             "truck_tank_volume",
             "truck_tank_volume_mapping",
         ];
-        const deviceExistenceValidate = await this.dbConnection.query(
+        const deviceExistenceValidate = await this.connectionPool.query(
             deviceExistence,
             [imei],
         );
@@ -278,11 +383,10 @@ export class DeviceService {
         const results = { code: 400 };
         const dbResults = [];
         for (const i of keys) {
-            const updateQuery = await this.dbConnection.execute(deassignTruck, [
+            const updateQuery = await this.connectionPool.execute(deassignTruck, [
                 i,
                 imei,
             ]);
-            console.log(updateQuery);
             if (updateQuery.affectedRows > 0) {
                 dbResults.push({ code: 200 });
             } else {
@@ -299,12 +403,73 @@ export class DeviceService {
         return results;
     }
 
+    async setFirmwareUrl(fw_url, imei) {
+        const validate = DEVICE_FIRMWARE_INPUT_SCHEMA.safeParse(fw_url);
+        if (validate.error) {
+            return { code: 400, reason: z.treeifyError(validate.error) };
+        }
+        const insertInfo = [];
+        for (const k of Object.keys(validate.data)) {
+            insertInfo.push({
+                key: k,
+                value: validate.data[k],
+                modified_at: Date.now(),
+            });
+        }
+
+        const deviceExistenceValidate = await this.connectionPool.query(
+            deviceExistence,
+            [imei],
+        );
+
+        if (!Number(deviceExistenceValidate[0].count)) {
+            return {
+                code: 400,
+                reason: "Device Not Found",
+            };
+        }
+
+        for (const { key, value } of insertInfo) {
+            const searchRes = await this.connectionPool
+                .query(truckInfoElementIndex, [key, key, imei])
+                .catch((err) => ({ error: err }));
+
+            if (searchRes.error) {
+                conn.release();
+                return { code: 500, reason: searchRes.error.message };
+            }
+
+            const path = searchRes[0]?.path;
+            let query = "";
+            let params = [];
+
+            if (path) {
+                const indexPath = path.replace(".key", "");
+                query = updateDeviceFields;
+                params = [indexPath, key, value, Date.now(), imei];
+            } else {
+                query = insertDeviceFields;
+                params = [key, value, Date.now(), imei];
+            }
+
+            const updateRes = await this.connectionPool
+                .query(query, params)
+                .catch((err) => ({ error: err }));
+
+            if (updateRes.error) {
+                return { code: 500, reason: updateRes.error.message };
+            }
+        }
+
+        return { code: 200, res: "Success" };
+    }
+
     async deviceDirective(imei, directiveMsg) {
         const res = { code: 400 };
         switch (directiveMsg.message) {
             case "SYNC:CALIBRATION:volume": {
-                const getQuery = await this.dbConnection
-                    .execute(getDeviceTankVolumeCalibration, [
+                const getQuery = await this.connectionPool
+                    .execute(getDeviceFields, [
                         "truck_tank_volume_mapping",
                         imei,
                     ])
@@ -312,15 +477,18 @@ export class DeviceService {
                         return { error: err };
                     });
 
-                if (getQuery.error || !getQuery[0].volume_map) {
-                    console.error(getQuery.error ? getQuery.error : getQuery);
+                if (getQuery.error || !getQuery[0].dev_field) {
+                    logfmt("error", {
+                        event: "Device Directive Service",
+                        msg: getQuery,
+                    });
                     res.reason = "NOT_FOUND:CALIBRATION:volume";
                     res.code = 500;
                     break;
                 }
-                if (getQuery[0].volume_map.length > 1) {
+                if (getQuery[0].dev_field.length > 1) {
                     res.code = 200;
-                    res.res = getQuery[0].volume_map;
+                    res.res = `${directiveMsg.message}\n${getQuery[0].dev_field}`;
                     break;
                 }
                 res.reason = "NOT_FOUND:CALIBRATION:volume";
@@ -328,8 +496,31 @@ export class DeviceService {
                 break;
             }
             case "GET:FIRMWARE:latest": {
-                res.code = 200;
-                res.res = "";
+                const getQuery = await this.connectionPool
+                    .execute(getDeviceFields, [
+                        "firmware_url",
+                        imei,
+                    ])
+                    .catch((err) => {
+                        return { error: err };
+                    });
+
+                if (getQuery.error || !getQuery[0].dev_field) {
+                    logfmt("error", {
+                        event: "Device Directive Service",
+                        msg: getQuery,
+                    });
+                    res.reason = "NOT_FOUND:FIRMWARE:latest";
+                    res.code = 500;
+                    break;
+                }
+                if (getQuery[0].dev_field.length > 1) {
+                    res.code = 200;
+                    res.res = `${directiveMsg.message}\n${getQuery[0].dev_field}`;
+                    break;
+                }
+                res.reason = "NOT_FOUND:FIRMWARE:latest";
+                res.code = 500;
                 break;
             }
             default: {

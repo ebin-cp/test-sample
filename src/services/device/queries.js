@@ -3,7 +3,11 @@ INSERT INTO devices (deviceId, imei, api_keys,fields,presence,created_at,modifie
 `;
 
 export const deviceMonitorLogInsertion = `
-INSERT INTO device_monitor_log (id, imei, measurement,tags,fields,timestamp) VALUES (?,?,?,?,?,?);
+INSERT INTO device_monitor_log (imei, measurement,tags,fields,timestamp) 
+VALUES (?,?,?,?,?)
+ON DUPLICATE KEY UPDATE
+    tags = ?,
+    fields = ?;
 `;
 
 export const deviceExistence = `
@@ -42,9 +46,9 @@ export const updateDevicePresence = `
 UPDATE devices SET presence = CONCAT(?,' ', UNIX_TIMESTAMP() * 1000) WHERE imei = ?;
 `;
 
-export const getDeviceTankVolumeCalibration = `
+export const getDeviceFields = `
 SELECT 
-    JSON_UNQUOTE(JSON_EXTRACT(fields, CONCAT(REPLACE(JSON_UNQUOTE(JSON_SEARCH(fields, 'one',?, NULL, '$[*].key')), '.key', ''), '.value'))) AS volume_map
+    JSON_UNQUOTE(JSON_EXTRACT(fields, CONCAT(REPLACE(JSON_UNQUOTE(JSON_SEARCH(fields, 'one',?, NULL, '$[*].key')), '.key', ''), '.value'))) AS dev_field
 FROM devices
 WHERE
     imei=?;
@@ -68,11 +72,11 @@ WHERE
     imei = ?; 
     `;
 
-export const updateTruckFields = `
+export const updateDeviceFields = `
 UPDATE devices SET fields = JSON_SET(fields, ?, JSON_OBJECT('key', ?, 'value', ?, 'modified_at', ?)) WHERE imei = ?;
 `;
 
-export const insertTruckFields = `
+export const insertDeviceFields = `
 UPDATE devices SET fields = JSON_ARRAY_APPEND(IF(JSON_LENGTH(fields) > 0,fields,'[]'), '$', JSON_OBJECT('key', ?, 'value', ?, 'modified_at', ?)) WHERE imei = ?;
 `;
 

@@ -1,0 +1,128 @@
+name: Rapid Fire Message Test With 50 Devices
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+    branches:
+      - develop
+
+jobs:
+  load-test-with-docker:
+    runs-on: ubuntu-latest
+    environment: load_test
+    strategy:
+      fail-fast: false
+      matrix:
+        WS_MSG_INTERVAL: [100, 200, 300, 400, 500]
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: |
+          echo "DATABASE_ROOT_PASSWORD=${{ secrets.DB_ROOT_PASSWD }}" >> .env
+          echo "DATABASE_USER=${{ secrets.DB_USER }}" >> .env
+          echo "DATABASE_USER_PASSWORD=${{ secrets.DB_USER_PASSWD }}" >> .env
+          echo "DATABASE_NAME=${{ secrets.DB_NAME }}" >> .env
+          echo "DATABASE_HOST=mysql" >> .env
+          echo "DATABASE_PORT=3306" >> .env
+          mkdir -p docker/v1
+          mv .env docker/v1/
+
+      - name: Start Services
+        run: docker compose -f ./docker/v1/docker-compose.yml up -d
+
+      - name: Wait for Services to be Ready
+        run: |
+          sleep 15
+          curl --retry 5 --retry-connrefused http://localhost:8883/health
+
+      - name: Setup Grafana K6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Execute Test
+        id: k6_run
+        run: |
+          k6 run rapid-fire-message-test.js --summary-export=../../summary.json
+        working-directory: ./tests/src
+        env:
+          WS_MSG_INTERVAL: ${{ matrix.WS_MSG_INTERVAL }}
+
+      - name: Wait for messages to fully flushed
+        run: |
+          sleep 10
+
+      - name: Capture Docker Logs
+        if: always() # CRITICAL: Runs even if the test fails
+        run: |
+          docker logs nodejs_app > nodejs_app_debug.log 2>&1
+          docker logs mysql > db_debug.log 2>&1
+
+      - name: Upload Docker Logs as Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs-${{matrix.WS_MSG_INTERVAL}}ms-${{ github.run_id }}-${{ github.run_attempt }}
+          path: "*.log"
+
+      - name: Final Validation
+        if: always()
+        env:
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
+        run: |
+          # Extract Metrics from k6 Summary (Corrected JQ Path)
+          WS_SENT=$(jq '.metrics.ws_metrics_sent_msgs.count // 0' summary.json)
+          EXPECTED_ROWS=$(( WS_SENT * 4 ))
+
+          # 2. Extract Data from MySQL
+          ACTUAL_ROWS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device_monitor_log;" || echo "0")
+
+          DEVICE_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.device;" 2>/dev/null || \
+                         docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{secrets.DB_NAME}}.devices;" 2>/dev/null || echo "0")
+
+          if [ "$WS_SENT" -gt 0 ] && [ "$ACTUAL_ROWS" -eq "$EXPECTED_ROWS" ]; then
+            STATUS="SUCCESS"
+          else
+            STATUS="FAILED"
+          fi
+
+          # Generate GitHub Job Summary (UI Table)
+          echo "###  Load Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+          echo "| Devices Created | $DEVICE_COUNT |" >> $GITHUB_STEP_SUMMARY
+          echo "| WS Messages Sent | $WS_SENT |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rows Expected (4x) | $EXPECTED_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rows Actual in DB | $ACTUAL_ROWS |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | $STATUS |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$STATUS" == "FAILED" ]; then
+            if [ "$WS_SENT" -eq 0 ]; then
+               echo "::error::No messages were sent by K6."
+            else
+               echo "::error::Data mismatch! Expected exactly $EXPECTED_ROWS but found $ACTUAL_ROWS."
+            fi
+            exit 1
+          fi
+
+          # Final Integrity Check
+          if [ "$ACTUAL_ROWS" -lt "$EXPECTED_ROWS" ] || [ "$WS_SENT" -eq 0 ]; then
+            echo "::error::Validation Failed! Sent: $WS_SENT, Expected: $EXPECTED_ROWS, DB: $ACTUAL_ROWS"
+            exit 1
+          fi
+
+      - name: Upload Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-logs-${{ matrix.WS_MSG_INTERVAL }}
+          path: |
+            summary.json
+
+      - name: Stop Services
+        if: always()
+        run: docker compose -f ./docker/v1/docker-compose.yml down -v

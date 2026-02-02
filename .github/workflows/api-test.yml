@@ -1,7 +1,12 @@
-on: 
-  push:
-    branches: [ feat/api-ws-tests ]
-  workflow_dispatch:
+name: API Validation Test
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+    branches:
+      - develop
 
 jobs:
   api-validation-tests:
@@ -26,13 +31,13 @@ jobs:
           cp .env docker/v1/.env          
           docker compose -f ./docker/v1/docker-compose.yml up -d          
           sleep 15
-      
+
       - name: Setup k6
         uses: grafana/setup-k6-action@v1
 
       - name: Execute Test
         id: k6_run
-        continue-on-error: true 
+        continue-on-error: true
         run: |
           k6 run api-main-test.js \
           --summary-export=../../summary.json \
@@ -42,22 +47,21 @@ jobs:
       - name: Final DB & API Validation
         if: always()
         env:
-          DB_PASS: "${{secrets.DB_ROOT_PASSWD}}"
+          MYSQL_PWD: "${{secrets.DB_ROOT_PASSWD}}"
           DB_NAME: "${{secrets.DB_NAME}}"
         run: |
-          
+
           if [ ! -f summary.json ]; then echo "Summary missing"; exit 1; fi
-          
-          # --- 1. Extract API Metrics from summary.json ---
+
+          #  Extract API Metrics from summary.json 
           ASSIGN_OK=$(jq -r '.root_group.checks["Assign Status 200"].passes // 0' summary.json)
           DEASSIGN_OK=$(jq -r '.root_group.checks["Deassign Status 200"].passes // 0' summary.json)
-          
-          # --- 2. Extract Measurement & DB Metrics ---
+
+          #  Extract Measurement & DB Metrics 
           WS_SENT_COUNT=$(jq -r '.metrics.ws_metrics_sent_msgs.count // 0' summary.json)
-          TOTAL_DEVICES=$(docker exec mysql mysql -u root -p${{env.DB_PASS}} -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "0")
-          TOTAL_DB_LOGS=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
-          
-          # Same measurement logic as before
+          TOTAL_DEVICES=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{env.DB_NAME}}.devices;" 2>/dev/null || echo "0")
+          TOTAL_DB_LOGS=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log;" 2>/dev/null || echo "0")
+
           EXPECTED_TOTAL_LOGS=$((WS_SENT_COUNT * 4))
           if [ "$TOTAL_DEVICES" -gt 0 ]; then
              EXPECTED_PER_DEVICE=$((EXPECTED_TOTAL_LOGS / TOTAL_DEVICES))
@@ -65,8 +69,8 @@ jobs:
              EXPECTED_PER_DEVICE=0
           fi
 
-          # --- 3. Generate GitHub Step Summary Report ---
-          
+          # Generate GitHub Step Summary Report
+
           echo "| Resource | Created | Expected |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| Total Devices | $TOTAL_DEVICES | 50 |" >> $GITHUB_STEP_SUMMARY
@@ -75,22 +79,22 @@ jobs:
           echo "| :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| Truck Assignment | $ASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
           echo "| Truck De-assignment | $DEASSIGN_OK | 50 |" >> $GITHUB_STEP_SUMMARY
-          
+
           echo "#### **Measurement & DB Consistency**" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "| :--- | :--- |" >> $GITHUB_STEP_SUMMARY
           echo "| Total WS Messages Sent | $WS_SENT_COUNT |" >> $GITHUB_STEP_SUMMARY
           echo "| Total DB Logs (Received) | $TOTAL_DB_LOGS |" >> $GITHUB_STEP_SUMMARY
           echo "| Expected Logs Per Device | $EXPECTED_PER_DEVICE |" >> $GITHUB_STEP_SUMMARY
-          
-          # --- 4. Consistency Per-Device Logic (Your existing loop) ---
+
+          # Consistency Per-Device Logic
           MATCH_COUNT=0
           MISMATCH_COUNT=0
           touch mismatches.txt
-          IMEI_LIST=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT imei FROM ${{env.DB_NAME}}.devices;")
-          
+          IMEI_LIST=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT imei FROM ${{env.DB_NAME}}.devices;")
+
           for id in $IMEI_LIST; do
-            DB_COUNT=$(docker exec mysql mysql -u root -p${{ env.DB_PASS }} -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
+            DB_COUNT=$(docker exec -e MYSQL_PWD mysql mysql -u root -N -s -e "SELECT COUNT(*) FROM ${{ env.DB_NAME }}.device_monitor_log WHERE imei = '$id';" 2>/dev/null || echo "0")
             if [ "$DB_COUNT" -eq "$EXPECTED_PER_DEVICE" ] && [ "$EXPECTED_PER_DEVICE" -ne 0 ]; then
               MATCH_COUNT=$((MATCH_COUNT+1))
             else
@@ -104,6 +108,7 @@ jobs:
           else
             echo "> **FAILED:** Data inconsistency detected! Matched: $MATCH_COUNT, Mismatched: $MISMATCH_COUNT" >> $GITHUB_STEP_SUMMARY
           fi
+
       - name: Calibration Report
         if: always()
         run: |
@@ -119,7 +124,24 @@ jobs:
           else
             echo "| Calibration Sync | $CALIB_OK | $TARGET_VUS | FAIL |" >> $GITHUB_STEP_SUMMARY
             exit 1 
-          fi    
+          fi
+
+      - name: Firmware Directive Report
+        if: always()
+        run: |
+          FIRMWARE_OK=$(jq -r '.metrics.firmware_url_total.count // 0' summary.json)
+          TARGET_VUS=50
+
+          echo "###  Calibration Verification Report" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Result | Target | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "| :--- | :--- | :--- | :--- |" >> $GITHUB_STEP_SUMMARY
+
+          if [ "$FIRMWARE_OK" -ge "$TARGET_VUS" ]; then
+            echo "| Get Firmware URL | $FIRMWARE_OK | $TARGET_VUS | PASS |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Get Firmware URL | $FIRMWARE_OK | $TARGET_VUS | FAIL |" >> $GITHUB_STEP_SUMMARY
+            exit 1 
+          fi
 
       - name: Upload Artifacts
         if: always()

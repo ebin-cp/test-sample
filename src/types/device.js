@@ -46,3 +46,8 @@ export const TRUCK_INFO_INPUT_SCHEMA = z.strictObject({
         .regex(/^(\d+,\d+(\.\d+)?(\r?\n|$)){3,100}$/)
         .optional(),
 });
+
+export const DEVICE_FIRMWARE_INPUT_SCHEMA = z.strictObject({
+    firmware_url: z
+        .string()
+});

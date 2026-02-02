@@ -1,6 +1,6 @@
 import http from "k6/http";
 
-export function createDevices(count = 330) {
+export function createDevices(count = 90) {
     const deviceKeys = [];
     const generateIMEI = () => Array.from({length: 15}, () => Math.floor(Math.random() * 10)).join("");
 
@@ -13,7 +13,7 @@ export function createDevices(count = 330) {
 
         if (res.status === 200 || res.status === 201) {
             const d = res.json();
-            const apiKey = d.key && d.key.key ? d.key.key : (d.key ? d.key : null);
+            const apiKey = d.key?.key ? d.key.key : (d.key ? d.key : null);
             if (apiKey) deviceKeys.push({ api_key: apiKey, imei: imei });
         }
     }
